@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "com.plancher-labs.atlas-minimized",
+  "name": "A.T.L.A.S Minimized Windows",
+  "version": "1.0.0",
+  "author": "Claude / Steve Plancher",
+  "description": "Shows windows minimized from the title bar; click one to bring it back.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Minimized windows",
+    "description": "Windows minimized from the title bar, with restore.",
+    "category": "System",
+    "aliases": [
+      "minimized"
+    ],
+    "allowMultiple": false
+  }
+}

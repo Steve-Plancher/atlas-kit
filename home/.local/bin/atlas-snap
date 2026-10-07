@@ -1,0 +1,936 @@
+#!/usr/bin/env python3
+"""A.T.L.A.S Snap: Windows-style window snapping for Hyprland.
+
+Drag a window (by its title bar, or SUPER + drag) against a screen edge and drop it:
+  left / right edge      half of the screen
+  top edge               maximized (fills the work area, stays a normal floating window)
+  any corner             a quarter of the screen
+A translucent preview shows the target while you drag. Dragging a snapped window away and
+dropping it elsewhere restores the size it had before it was snapped.
+
+Hyprland reports no drag events, so the left mouse button is read straight from the kernel
+input devices (the user is in the `input` group) and, only while it is held, the active
+window and cursor are polled over Hyprland's request socket.
+
+Commands
+  run                  watch drags; print preview JSON lines for the atlas-snap overlay plugin
+  maximize             toggle maximize for the active window (title bar button / double click)
+  minimize             send the active window to the hidden "minimized" special workspace
+  restore [ADDRESS]    bring minimized windows (or one) back to the current workspace
+  list                 minimized windows as JSON (for the bar widget)
+  place-free MONITOR [--from X,Y,W,H] ADDRESS...
+                       move windows into free space on MONITOR without overlapping others,
+                       nearest their relative position on the old screen (X,Y,W,H)
+  arrange ADDRESS      snap every normal window on ADDRESS's workspace into a layout,
+                       ADDRESS (the window that just opened) in the last slot, focused
+  reflow WORKSPACE     re-arrange the normal windows left on WORKSPACE (by name) after one closed
+  auto [on|off]        new windows auto-arrange their workspace; closing or minimizing one
+                       re-flows the rest, restoring slots it back in (default on); no arg = status
+  menu                 pick a layout for the active window (SUPER+Z)
+  <zone>               snap the active window from the keyboard, where <zone> is one of
+                       left right top-left top-right bottom-left bottom-right
+                       third-left third-center third-right center-focus max
+"""
+import glob
+import json
+import os
+import select
+import socket
+import struct
+import subprocess
+import sys
+import time
+from math import gcd
+from pathlib import Path
+
+RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
+STATE_FILE = RUNTIME / "atlas-snap" / "snapped.json"
+
+BTN_LEFT = 272
+EV_KEY = 0x01
+EVENT_FMT = "llHHi"
+EVENT_SIZE = struct.calcsize(EVENT_FMT)
+
+EDGE = 3            # logical px from a screen edge that counts as "at the edge"
+CORNER = 110        # logical px from a corner, along an edge, that counts as a corner
+DWELL = 0.06        # seconds a zone must hold before its preview shows (no flicker in passing)
+POLL = 1 / 45       # drag polling interval, only while the button is held
+
+# The blocks shown faintly alongside the hovered one, so the layout being chosen is visible.
+HALVES = ["left", "right"]
+QUARTERS = ["top-left", "top-right", "bottom-left", "bottom-right"]
+LAYOUT_GROUPS = {**{z: HALVES for z in HALVES}, **{z: QUARTERS for z in QUARTERS}, "max": []}
+
+ZONES = ["left", "right", "top-left", "top-right", "bottom-left", "bottom-right",
+         "third-left", "third-center", "third-right", "center-focus", "max"]
+MENU = [
+    ("󰕭", "Left half", "left"), ("󰕬", "Right half", "right"),
+    ("󰕰", "Top left quarter", "top-left"), ("󰕰", "Top right quarter", "top-right"),
+    ("󰕰", "Bottom left quarter", "bottom-left"), ("󰕰", "Bottom right quarter", "bottom-right"),
+    ("󰕴", "Left third", "third-left"), ("󰕴", "Center third", "third-center"), ("󰕴", "Right third", "third-right"),
+    ("󰘕", "Center focus", "center-focus"), ("󰊓", "Maximize", "max"),
+]
+
+
+# ── Hyprland ─────────────────────────────────────────────────────────────────
+
+def signature():
+    sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    if sig:
+        return sig
+    dirs = sorted((p for p in (RUNTIME / "hypr").iterdir() if p.is_dir()),
+                  key=lambda p: p.stat().st_mtime, reverse=True)
+    return dirs[0].name
+
+
+def request(cmd):
+    """One request over Hyprland's socket, with no process spawn (polled 30x a second)."""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        s.connect(str(RUNTIME / "hypr" / signature() / ".socket.sock"))
+        s.sendall(cmd.encode())
+        chunks = []
+        while True:
+            data = s.recv(65536)
+            if not data:
+                break
+            chunks.append(data)
+    return b"".join(chunks).decode(errors="replace")
+
+
+def jreq(what):
+    try:
+        return json.loads(request("j/" + what))
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"atlas-snap: request {what!r} failed: {exc!r} "
+              f"(instance {os.environ.get('HYPRLAND_INSTANCE_SIGNATURE', '?')})", file=sys.stderr, flush=True)
+        return None
+
+
+def dispatch(lua):
+    env = os.environ.copy()
+    env.setdefault("HYPRLAND_INSTANCE_SIGNATURE", signature())
+    subprocess.run(["hyprctl", "dispatch", lua], capture_output=True, env=env)
+
+
+def title_bar_height():
+    try:
+        plugins = request("plugin list")
+    except OSError:
+        return 0
+    return option_int("plugin:hyprbars:bar_height", 0) if "hyprbars" in plugins else 0
+
+
+def option_int(name, default):
+    try:
+        return int(json.loads(request("j/getoption " + name)).get("int", default))
+    except Exception:
+        return default
+
+
+# ── Geometry ─────────────────────────────────────────────────────────────────
+
+def logical(mon):
+    """Monitor size in the logical px Hyprland positions windows in (scale + rotation)."""
+    w, h = mon["width"] / mon["scale"], mon["height"] / mon["scale"]
+    if mon.get("transform", 0) % 2:
+        w, h = h, w
+    return w, h
+
+
+def monitor_at(monitors, x, y):
+    for m in monitors:
+        w, h = logical(m)
+        if m["x"] <= x < m["x"] + w and m["y"] <= y < m["y"] + h:
+            return m
+    return None
+
+
+def monitor_of(win, monitors):
+    return next((m for m in monitors if m["id"] == win.get("monitor")), None) or \
+        next((m for m in monitors if m.get("focused")), None) or (monitors[0] if monitors else None)
+
+
+def zone_for(mon, x, y):
+    w, h = logical(mon)
+    lx, ly = x - mon["x"], y - mon["y"]
+    left, right = lx <= EDGE, lx >= w - 1 - EDGE
+    top, bottom = ly <= EDGE, ly >= h - 1 - EDGE
+    near_top, near_bottom = ly <= CORNER, ly >= h - CORNER
+    near_left, near_right = lx <= CORNER, lx >= w - CORNER
+    if (left and near_top) or (top and near_left):
+        return "top-left"
+    if (right and near_top) or (top and near_right):
+        return "top-right"
+    if (left and near_bottom) or (bottom and near_left):
+        return "bottom-left"
+    if (right and near_bottom) or (bottom and near_right):
+        return "bottom-right"
+    if left:
+        return "left"
+    if right:
+        return "right"
+    if top:
+        return "max"
+    return None
+
+
+def zone_rect(mon, zone):
+    """Target box in global logical px, inside the bar/dock reservations and the gaps."""
+    gap_out = option_int("general:gaps_out", 10)
+    gap_in = option_int("general:gaps_in", 5)
+    # hyprbars draws the title bar *above* the window's reported top edge, so leave that
+    # much headroom or a window snapped to the top has its title bar cut off by the screen.
+    bar = title_bar_height()
+    w, h = logical(mon)
+    rl, rt, rr, rb = (mon.get("reserved") or [0, 0, 0, 0])[:4]
+    x0, y0 = mon["x"] + rl + gap_out, mon["y"] + rt + gap_out + bar
+    W, H = w - rl - rr - 2 * gap_out, h - rt - rb - 2 * gap_out - bar
+    between = 2 * gap_in
+    half_w, half_h = (W - between) / 2, (H - between) / 2
+    third_w = (W - 2 * between) / 3
+    half_h = (H - between - bar) / 2
+    right_x, bottom_y = x0 + half_w + between, y0 + half_h + between + bar
+    boxes = {
+        "max": (x0, y0, W, H),
+        "left": (x0, y0, half_w, H),
+        "right": (right_x, y0, half_w, H),
+        "top-left": (x0, y0, half_w, half_h),
+        "top-right": (right_x, y0, half_w, half_h),
+        "bottom-left": (x0, bottom_y, half_w, half_h),
+        "bottom-right": (right_x, bottom_y, half_w, half_h),
+        "third-left": (x0, y0, third_w, H),
+        "third-center": (x0 + third_w + between, y0, third_w, H),
+        "third-right": (x0 + 2 * (third_w + between), y0, third_w, H),
+        "center-focus": (x0 + W * 0.19, y0 + H * 0.09, W * 0.62, H * 0.82),
+    }
+    return tuple(int(round(v)) for v in boxes[zone])
+
+
+# ── Snap state: size before the first snap, so un-snapping can restore it ────
+
+def load_state():
+    try:
+        return json.loads(STATE_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def save_state(state):
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = STATE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state))
+    tmp.replace(STATE_FILE)
+
+
+def live_entry(state, win, tolerance=6):
+    """The saved pre-snap info for this window, or None if it is stale: Hyprland reuses the
+    addresses of closed windows, and a window moved or resized by hand is no longer snapped."""
+    entry = state.get(win["address"])
+    box = (entry or {}).get("box")
+    if not entry or not box:
+        return None
+    x, y, w, h = box
+    (ax, ay), (aw, ah) = win["at"], win["size"]
+    if max(abs(ax - x), abs(ay - y), abs(aw - w), abs(ah - h)) > tolerance:
+        return None
+    return entry
+
+
+def prune_state(state):
+    clients = jreq("clients")
+    if clients is None:
+        return state
+    alive = {c["address"] for c in clients}
+    return {a: e for a, e in state.items() if a in alive}
+
+
+def place(address, floating, box, focus=False):
+    x, y, w, h = box
+    target = f"address:{address}"
+    lua = []
+    if focus:  # move() acts on the focused window, so focus it first when it may not be
+        lua.append(f'hl.dispatch(hl.dsp.focus({{ window = "{target}" }}))')
+    if not floating:
+        lua.append(f'hl.dispatch(hl.dsp.window.float({{ action = "enable", window = "{target}" }}))')
+    # A resize keeps the window's centre where it is, so size first, then position. All of it
+    # goes in ONE eval so Hyprland sets both goals in the same frame and animates a single
+    # glide into place, instead of a grow-from-centre followed by a separate slide.
+    lua.append(f'hl.dispatch(hl.dsp.window.resize({{ x = {w}, y = {h}, window = "{target}" }}))')
+    lua.append(f"hl.dispatch(hl.dsp.window.move({{ x = {x}, y = {y} }}))")
+    env = os.environ.copy()
+    env.setdefault("HYPRLAND_INSTANCE_SIGNATURE", signature())
+    subprocess.run(["hyprctl", "eval", "; ".join(lua)], capture_output=True, env=env)
+
+
+def snap(win, mon, zone, pre_drag=None):
+    state = prune_state(load_state())
+    addr = win["address"]
+    entry = live_entry(state, pre_drag or win)
+    box = zone_rect(mon, zone)
+    # Remember the size from before the *first* snap: re-snapping a snapped window keeps it.
+    state[addr] = {"at": entry["at"], "size": entry["size"]} if entry else {"at": win["at"], "size": win["size"]}
+    state[addr].update({"zone": zone, "box": list(box)})
+    save_state(state)
+    place(addr, win.get("floating", True), box)
+
+
+def unsnap(win, cursor, grab_ratio, pre_drag):
+    state = load_state()
+    saved = live_entry(state, pre_drag)
+    state.pop(win["address"], None)
+    save_state(state)
+    if not saved:
+        return
+    w, h = saved["size"]
+    # Keep the spot you grabbed under the cursor, like Windows.
+    x = int(cursor["x"] - grab_ratio * w)
+    place(win["address"], True, (x, int(win["at"][1]), w, h))
+
+
+# ── Free-space placement ─────────────────────────────────────────────────────
+
+GRID = 10          # logical px per occupancy cell
+MIN_FREE = (360, 240)  # smallest free area worth shrinking a window into
+
+
+def work_area(mon):
+    """Usable box (global logical px): the monitor minus reservations, gaps and title bar."""
+    return zone_rect(mon, "max")
+
+
+def occupied_boxes(mon, exclude):
+    """Boxes taken on the monitor's visible workspace, grown by the gap and each window's title
+    bar so a placed window neither touches another nor covers its title bar."""
+    ws = (mon.get("activeWorkspace") or {}).get("id")
+    gap = 2 * option_int("general:gaps_in", 5)
+    bar = title_bar_height()
+    boxes = []
+    for c in jreq("clients") or []:
+        if c["address"] in exclude or (c.get("workspace") or {}).get("id") != ws or c.get("hidden"):
+            continue
+        (x, y), (w, h) = c["at"], c["size"]
+        # Taken: the window, its title bar above it, the gap all round, and a title bar's worth
+        # below it too, since a window placed underneath carries its own title bar above itself.
+        boxes.append((x - gap, y - bar - gap, w + 2 * gap, h + 2 * bar + 2 * gap))
+    return boxes
+
+
+class Occupancy:
+    """Grid over the work area with a 2D prefix sum, so 'is this box free?' is O(1)."""
+
+    def __init__(self, area, boxes):
+        self.area, self.boxes = area, list(boxes)
+        self.x0, self.y0, W, H = area
+        self.cols, self.rows = max(1, W // GRID), max(1, H // GRID)
+        grid = [[0] * self.cols for _ in range(self.rows)]
+        for bx, by, bw, bh in boxes:
+            c0 = max(0, (bx - self.x0) // GRID); c1 = min(self.cols, -(-(bx + bw - self.x0) // GRID))
+            r0 = max(0, (by - self.y0) // GRID); r1 = min(self.rows, -(-(by + bh - self.y0) // GRID))
+            for r in range(r0, r1):
+                row = grid[r]
+                for c in range(c0, c1):
+                    row[c] = 1
+        self.grid = grid
+        self.sum = [[0] * (self.cols + 1) for _ in range(self.rows + 1)]
+        for r in range(self.rows):
+            acc = 0
+            for c in range(self.cols):
+                acc += grid[r][c]
+                self.sum[r + 1][c + 1] = self.sum[r][c + 1] + acc
+
+    def taken(self, c, r, cw, rh):
+        s = self.sum
+        return s[r + rh][c + cw] - s[r][c + cw] - s[r + rh][c] + s[r][c]
+
+    def free(self, c, r, cw, rh):
+        return self.taken(c, r, cw, rh) == 0
+
+    def with_box(self, box):
+        """A new grid that also counts `box` as taken (the window just placed)."""
+        return Occupancy(self.area, self.boxes + [box])
+
+    def largest_free(self):
+        """Largest empty rectangle (histogram method) as (c, r, cw, rh)."""
+        best, heights = (0, 0, 0, 0), [0] * self.cols
+        for r in range(self.rows):
+            for c in range(self.cols):
+                heights[c] = heights[c] + 1 if self.grid[r][c] == 0 else 0
+            stack = []
+            for c in range(self.cols + 1):
+                h = heights[c] if c < self.cols else 0
+                start = c
+                while stack and stack[-1][1] >= h:
+                    start, sh = stack.pop()
+                    if sh * (c - start) > best[2] * best[3]:
+                        best = (start, r - sh + 1, c - start, sh)
+                stack.append((start, h))
+        return best
+
+
+def find_spot(win, mon, occ, preferred):
+    """Where to put `win` on `mon`, in order of preference:
+      1. its own size, in the free spot nearest `preferred`
+      2. shrunk into the largest free area, if that area is still a usable size
+      3. its own size, wherever it covers the least of the other windows"""
+    x0, y0, W, H = work_area(mon)
+    w, h = min(win["size"][0], W), min(win["size"][1], H)
+    cw, rh = -(-w // GRID), -(-h // GRID)
+    px, py = preferred
+    best, best_d = None, None
+    for r in range(0, occ.rows - rh + 1):
+        for c in range(0, occ.cols - cw + 1):
+            if occ.free(c, r, cw, rh):
+                x, y = x0 + c * GRID, y0 + r * GRID
+                d = (x - px) ** 2 + (y - py) ** 2
+                if best_d is None or d < best_d:
+                    best, best_d = (x, y, w, h), d
+    if best:
+        return best
+    fc, fr, fcw, frh = occ.largest_free()  # distinct names: cw/rh are still the window's size
+    fw, fh = fcw * GRID, frh * GRID
+    if fw >= MIN_FREE[0] and fh >= MIN_FREE[1]:
+        return (x0 + fc * GRID, y0 + fr * GRID, min(fw, W), min(fh, H))
+    # The screen is full: overlap is unavoidable, so overlap as little as possible.
+    best, best_key = None, None
+    for r in range(0, occ.rows - rh + 1):
+        for c in range(0, occ.cols - cw + 1):
+            x, y = x0 + c * GRID, y0 + r * GRID
+            key = (occ.taken(c, r, cw, rh), (x - px) ** 2 + (y - py) ** 2)
+            if best_key is None or key < best_key:
+                best, best_key = (x, y, w, h), key
+    return best
+
+
+def cmd_place_free(monitor_name, addresses, old_monitor=None):
+    """Place windows that just arrived on `monitor_name` into free space, one at a time."""
+    monitors = jreq("monitors") or []
+    mon = next((m for m in monitors if m["name"] == monitor_name), None)
+    if not mon or not addresses:
+        return
+    clients = {c["address"]: c for c in jreq("clients") or []}
+    area = work_area(mon)
+    x0, y0, W, H = area
+    if W < 100 or H < 100:
+        return  # a monitor with no usable picture (0x0 after a failed mode set)
+    boxes = occupied_boxes(mon, set(addresses))
+    occ = Occupancy(area, boxes)
+    gap = 2 * option_int("general:gaps_in", 5)
+    bar = title_bar_height()
+    for addr in addresses:
+        win = clients.get(addr)
+        if not win or not win.get("floating", True):
+            continue  # tiled windows are arranged by the layout itself
+        # Preferred spot: the same relative position the window had on its old screen.
+        preferred = (x0, y0)
+        if old_monitor:
+            ow, oh = old_monitor.get("w") or 0, old_monitor.get("h") or 0
+            if ow and oh:
+                rx = (win["at"][0] - old_monitor["x"]) / ow
+                ry = (win["at"][1] - old_monitor["y"]) / oh
+                preferred = (x0 + rx * W, y0 + ry * H)
+        spot = find_spot(win, mon, occ, preferred)
+        place(addr, True, spot, focus=True)
+        x, y, w, h = spot
+        occ = occ.with_box((x - gap, y - bar - gap, w + 2 * gap, h + 2 * bar + 2 * gap))
+        print(f"placed {addr} ({win.get('class')}) at {spot}", flush=True)
+
+
+# ── Auto-arrange: a new window snaps in beside the others instead of on top ──
+
+AUTO_FLAG = Path.home() / ".config" / "atlas-snap" / "auto-arrange"
+AUTO_DELAY = 0.3     # let the window rules and the app's first size settle
+AUTO_MIN = (360, 240)  # anything smaller when it opens is a popup/dialog: leave it alone
+AUTO_MAX = 6
+# Windows that are meant to float over everything: Omarchy popups, pickers, PiP, screensaver.
+SKIP_TAGS = ("floating-window", "pip")
+SKIP_CLASSES = {"org.omarchy.screensaver", "org.omarchy.about", "omacalc", "dev.tensaku.Tensaku",
+                "xdg-desktop-portal-gtk", "hyprland-share-picker", ""}
+
+# Slots per window count, as (col, row, colspan, rowspan) in a cols x rows grid.
+LAYOUTS = {
+    1: (1, 1, [(0, 0, 1, 1)]),
+    2: (2, 1, [(0, 0, 1, 1), (1, 0, 1, 1)]),
+    3: (2, 2, [(0, 0, 1, 2), (1, 0, 1, 1), (1, 1, 1, 1)]),
+    4: (2, 2, [(0, 0, 1, 1), (0, 1, 1, 1), (1, 0, 1, 1), (1, 1, 1, 1)]),
+    5: (3, 2, [(0, 0, 1, 2), (1, 0, 1, 1), (1, 1, 1, 1), (2, 0, 1, 1), (2, 1, 1, 1)]),
+    6: (3, 2, [(0, 0, 1, 1), (0, 1, 1, 1), (1, 0, 1, 1), (1, 1, 1, 1), (2, 0, 1, 1), (2, 1, 1, 1)]),
+}
+
+
+def auto_enabled():
+    try:
+        return AUTO_FLAG.read_text().strip() != "off"
+    except OSError:
+        return True
+
+
+def arrangeable(c):
+    tags = c.get("tags") or []
+    return (c.get("mapped", True) and not c.get("hidden") and c.get("floating", True)
+            and not c.get("pinned") and not c.get("fullscreen")
+            and c.get("class", "") not in SKIP_CLASSES
+            and not any(t.rstrip("*") in SKIP_TAGS for t in tags))
+
+
+def grid_rect(mon, cols, rows, col, row, colspan=1, rowspan=1):
+    """A cell of the work area, with the same gaps and title bar headroom as zone_rect."""
+    x0, y0, W, H = zone_rect(mon, "max")
+    between = 2 * option_int("general:gaps_in", 5)
+    bar = title_bar_height()
+    cw = (W - (cols - 1) * between) / cols
+    rh = (H - (rows - 1) * (between + bar)) / rows
+    x = x0 + col * (cw + between)
+    y = y0 + row * (rh + between + bar)
+    w = colspan * cw + (colspan - 1) * between
+    h = rowspan * rh + (rowspan - 1) * (between + bar)
+    return tuple(int(round(v)) for v in (x, y, w, h))
+
+
+def arrange(mon, wins, focus_addr):
+    """Snap WINS (in order) into the layout for their count on MON, then focus FOCUS_ADDR."""
+    cols, rows, slots = LAYOUTS[len(wins)]
+    state = prune_state(load_state())
+    lua = []
+    for win, slot in zip(wins, slots):
+        box = grid_rect(mon, cols, rows, *slot)
+        addr = win["address"]
+        entry = live_entry(state, win)
+        state[addr] = {"at": entry["at"], "size": entry["size"]} if entry else {"at": win["at"], "size": win["size"]}
+        state[addr].update({"zone": "auto", "box": list(box)})
+        x, y, w, h = box
+        target = f"address:{addr}"
+        # move() only acts on the focused window, so focus each in turn.
+        lua.append(f'hl.dispatch(hl.dsp.focus({{ window = "{target}" }}))')
+        lua.append(f'hl.dispatch(hl.dsp.window.resize({{ x = {w}, y = {h}, window = "{target}" }}))')
+        lua.append(f"hl.dispatch(hl.dsp.window.move({{ x = {x}, y = {y} }}))")
+    if focus_addr and focus_addr != wins[-1]["address"]:
+        lua.append(f'hl.dispatch(hl.dsp.focus({{ window = "address:{focus_addr}" }}))')
+    save_state(state)
+    env = os.environ.copy()
+    env.setdefault("HYPRLAND_INSTANCE_SIGNATURE", signature())
+    subprocess.run(["hyprctl", "eval", "; ".join(lua)], capture_output=True, env=env)
+
+
+def in_order(wins):
+    """Left to right, then top to bottom, so a re-arrange keeps windows roughly where they were."""
+    return sorted(wins, key=lambda c: (round((c["at"][0] + c["size"][0] / 2) / 200), c["at"][1]))
+
+
+def cmd_arrange(address):
+    if not address.startswith("0x"):
+        address = "0x" + address
+    clients = jreq("clients") or []
+    new = next((c for c in clients if c["address"] == address), None)
+    if not new or not arrangeable(new) or (new.get("workspace") or {}).get("id", -1) < 0:
+        return
+    if new["size"][0] < AUTO_MIN[0] or new["size"][1] < AUTO_MIN[1]:
+        return
+    ws = new["workspace"]["id"]
+    monitors = jreq("monitors") or []
+    mon = monitor_of(new, monitors)
+    if not mon or (mon.get("activeWorkspace") or {}).get("id") != ws:
+        return  # opened on a workspace nobody is looking at
+    others = [c for c in clients if c["address"] != address and arrangeable(c)
+              and (c.get("workspace") or {}).get("id") == ws]
+    if len(others) + 1 > AUTO_MAX:
+        return  # too many to tile sensibly; Hyprland's own placement is better than slivers
+    # Existing windows keep their order; the new one goes last and ends up focused.
+    wins = in_order(others) + [new]
+    arrange(mon, wins, address)
+    print(f"arranged {len(wins)} on workspace {ws}: {[w.get('class') for w in wins]}", flush=True)
+
+
+def cmd_reflow(ws_name):
+    """A window closed on WS_NAME: spread the ones left over the space it freed."""
+    monitors = jreq("monitors") or []
+    mon = next((m for m in monitors if (m.get("activeWorkspace") or {}).get("name") == ws_name), None)
+    if not mon:
+        return  # not on screen; it re-flows the next time a window opens there
+    clients = jreq("clients") or []
+    wins = [c for c in clients if arrangeable(c) and (c.get("workspace") or {}).get("name") == ws_name
+            and c["size"][0] >= AUTO_MIN[0] and c["size"][1] >= AUTO_MIN[1]]
+    if not wins or len(wins) > AUTO_MAX:
+        return
+    active = (jreq("activewindow") or {}).get("address")
+    arrange(mon, in_order(wins), active)
+    print(f"reflowed {len(wins)} on workspace {ws_name}: {[w.get('class') for w in wins]}", flush=True)
+
+
+def cmd_auto(arg=None):
+    if arg in ("on", "off"):
+        AUTO_FLAG.parent.mkdir(parents=True, exist_ok=True)
+        AUTO_FLAG.write_text(arg + "\n")
+    print("on" if auto_enabled() else "off")
+
+
+REFLOW_DELAY = 0.15  # let Hyprland pick the window that gets focus after the close
+
+
+def schedule_reflow(address, ws_name):
+    """closewindow>>ADDRESS -> re-flow its workspace, if it was one atlas-snap had placed.
+    Dialogs, popups and windows that were never arranged or snapped close without a re-flow."""
+    if not auto_enabled() or not ws_name or ws_name.startswith("special"):
+        return
+    if "0x" + address not in load_state():
+        return
+    subprocess.Popen(["sh", "-c", f'sleep {REFLOW_DELAY}; exec "$0" reflow "$1"', sys.argv[0], ws_name],
+                     stdout=sys.stdout, stderr=sys.stderr)
+
+
+def window_workspaces():
+    """address (without 0x) -> workspace name, for every window open now."""
+    return {c["address"][2:]: (c.get("workspace") or {}).get("name", "")
+            for c in jreq("clients") or []}
+
+
+def schedule_arrange(line):
+    """openwindow>>ADDRESS,WORKSPACE,CLASS,TITLE -> arrange after the window settles."""
+    if not auto_enabled():
+        return
+    addr, _, rest = line[len(b"openwindow>>"):].decode(errors="replace").partition(",")
+    if rest.startswith("special"):
+        return
+    subprocess.Popen(["sh", "-c", f'sleep {AUTO_DELAY}; exec "$0" arrange "$1"', sys.argv[0], addr],
+                     stdout=sys.stdout, stderr=sys.stderr)
+
+
+# ── Input devices ────────────────────────────────────────────────────────────
+
+def has_left_button(event_path):
+    name = os.path.basename(event_path)
+    try:
+        words = Path(f"/sys/class/input/{name}/device/capabilities/key").read_text().split()
+    except OSError:
+        return False
+    bits = 0
+    for word in words:
+        bits = (bits << 64) | int(word, 16)
+    return bool(bits >> BTN_LEFT & 1)
+
+
+def open_pointers(current):
+    """(Re)scan for devices with a left button; keeps already-open fds, closes vanished ones."""
+    by_path = {path: fd for fd, path in current.items()}
+    found = {}
+    for path in sorted(glob.glob("/dev/input/event*")):
+        if path in by_path:
+            found[by_path[path]] = path
+        elif has_left_button(path):
+            try:
+                found[os.open(path, os.O_RDONLY | os.O_NONBLOCK)] = path
+            except OSError:
+                pass
+    for fd in set(current) - set(found):
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    return found
+
+
+# ── Commands ─────────────────────────────────────────────────────────────────
+
+def emit(obj):
+    print(json.dumps(obj), flush=True)
+
+
+def open_events():
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.connect(str(RUNTIME / "hypr" / signature() / ".socket2.sock"))
+    s.setblocking(False)
+    return s
+
+
+def cmd_run():
+    devices = open_pointers({})
+    try:
+        events, event_buf = open_events(), b""
+    except OSError:
+        events, event_buf = None, b""
+    # closewindow only carries the address, so remember where every window lives.
+    ws_of = window_workspaces() if events else {}
+    rescan_at = time.monotonic() + 5
+    pressed = False
+    press_cursor = None
+    drag = None          # {"win": window at drag start, "grab_ratio": 0..1}
+    candidate = None     # active window seen after the press (title bar clicks focus it)
+    zone, zone_since, shown = None, 0.0, None
+    bar_height = 0
+    emit({"show": False})
+
+    while True:
+        watch = list(devices) + ([events] if events else [])
+        ready, _, _ = select.select(watch, [], [], POLL if pressed else 1.0)
+        now = time.monotonic()
+
+        # Minimized windows only come back from the bar widget (atlas-snap restore). If Hyprland
+        # shows the minimized workspace any other way, hide it again at once.
+        if events in ready:
+            try:
+                chunk = events.recv(65536)
+            except BlockingIOError:
+                chunk = b""
+            except OSError:
+                chunk = None
+            if not chunk and chunk is not None:
+                events = None  # socket closed (Hyprland restarting); reconnect on the rescan
+            elif chunk:
+                event_buf += chunk
+                *lines, event_buf = event_buf.split(b"\n")
+                for line in lines:
+                    if line.startswith(b"activespecial>>special:minimized,") and not restoring():
+                        hide_minimized_workspace()
+                    elif line.startswith(b"openwindow>>"):
+                        addr, ws_name = line[12:].decode(errors="replace").split(",")[:2]
+                        ws_of[addr] = ws_name
+                        schedule_arrange(line)
+                    elif line.startswith(b"movewindowv2>>"):
+                        addr, _, ws_name = line[14:].decode(errors="replace").split(",", 2)
+                        ws_of[addr] = ws_name
+                    elif line.startswith(b"closewindow>>"):
+                        addr = line[13:].decode(errors="replace").strip()
+                        schedule_reflow(addr, ws_of.pop(addr, None))
+            ready = [fd for fd in ready if fd is not events]
+
+        for fd in ready:
+            try:
+                data = os.read(fd, EVENT_SIZE * 64)
+            except OSError:
+                continue
+            for i in range(0, len(data) - EVENT_SIZE + 1, EVENT_SIZE):
+                _, _, typ, code, value = struct.unpack(EVENT_FMT, data[i:i + EVENT_SIZE])
+                if typ != EV_KEY or code != BTN_LEFT:
+                    continue
+                if value == 1 and not pressed:
+                    pressed, drag, candidate, zone, shown = True, None, None, None, None
+                    press_cursor = jreq("cursorpos")
+                    bar_height = title_bar_height()
+                elif value == 0 and pressed:
+                    pressed = False
+                    if drag:
+                        try:
+                            win = jreq("activewindow") or drag["win"]
+                            cursor = jreq("cursorpos") or press_cursor
+                            mon = monitor_at(jreq("monitors") or [], cursor["x"], cursor["y"])
+                            final = zone_for(mon, cursor["x"], cursor["y"]) if mon else None
+                            if final:
+                                if shown:  # let the preview play its "locked in" flash
+                                    emit({"show": False, "commit": True})
+                                    shown = None
+                                snap(win, mon, final, drag["win"])
+                            elif win["address"] in load_state():
+                                unsnap(win, cursor, drag["grab_ratio"], drag["win"])
+                        except Exception as exc:
+                            print(f"snap failed: {exc}", file=sys.stderr, flush=True)
+                    if shown:
+                        emit({"show": False})
+                    drag, candidate, zone, shown = None, None, None, None
+
+        if pressed:
+            win = jreq("activewindow")
+            if win and win.get("address"):
+                if drag is None:
+                    if candidate is None or candidate["address"] != win["address"]:
+                        candidate = win
+                    else:
+                        moved_window = win["at"] != candidate["at"] and win["size"] == candidate["size"]
+                        # A title bar drag may not update the reported position until release,
+                        # so a press on the title bar plus real pointer movement also counts.
+                        on_bar = False
+                        cur = jreq("cursorpos") if press_cursor else None
+                        if cur and press_cursor and bar_height:
+                            px, py = press_cursor["x"], press_cursor["y"]
+                            (ax, ay), (aw, _) = candidate["at"], candidate["size"]
+                            travelled = abs(cur["x"] - px) + abs(cur["y"] - py)
+                            on_bar = ax <= px <= ax + aw and ay - bar_height <= py <= ay and travelled >= 8
+                        if moved_window or on_bar:
+                            cx = (press_cursor or {}).get("x", candidate["at"][0])
+                            ratio = (cx - candidate["at"][0]) / max(1, candidate["size"][0])
+                            drag = {"win": candidate, "grab_ratio": min(max(ratio, 0.0), 1.0)}
+                if drag:
+                    cursor = jreq("cursorpos")
+                    mon = monitor_at(jreq("monitors") or [], cursor["x"], cursor["y"]) if cursor else None
+                    z = zone_for(mon, cursor["x"], cursor["y"]) if mon else None
+                    if z != zone:
+                        zone, zone_since = z, now
+                    if zone and now - zone_since >= DWELL and shown != (mon["name"], zone):
+                        x, y, w, h = zone_rect(mon, zone)
+                        blocks = []
+                        for sibling in LAYOUT_GROUPS.get(zone, []):
+                            bx, by, bw, bh = zone_rect(mon, sibling)
+                            blocks.append({"zone": sibling, "x": bx - mon["x"], "y": by - mon["y"], "w": bw, "h": bh})
+                        emit({"show": True, "monitor": mon["name"], "zone": zone,
+                              "x": x - mon["x"], "y": y - mon["y"], "w": w, "h": h,
+                              "cx": cursor["x"] - mon["x"], "cy": cursor["y"] - mon["y"],
+                              "blocks": blocks})
+                        shown = (mon["name"], zone)
+                    elif not zone and shown:
+                        emit({"show": False})
+                        shown = None
+
+        if now >= rescan_at:
+            devices = open_pointers(devices)
+            if events is None:
+                try:
+                    events, event_buf = open_events(), b""
+                    ws_of = window_workspaces()
+                except OSError:
+                    events = None
+            rescan_at = now + 5
+
+
+def cmd_zone(zone):
+    win = jreq("activewindow")
+    if not win or not win.get("address"):
+        sys.exit("No active window")
+    mon = monitor_of(win, jreq("monitors") or [])
+    if not mon:
+        sys.exit("No monitor found")
+    snap(win, mon, zone)
+
+
+def cmd_maximize():
+    win = jreq("activewindow")
+    if not win or not win.get("address"):
+        print(f"atlas-snap maximize: no active window ({win!r})", file=sys.stderr, flush=True)
+        return
+    state = prune_state(load_state())
+    saved = live_entry(state, win)
+    if saved and saved.get("zone") == "max":
+        state.pop(win["address"])
+        save_state(state)
+        place(win["address"], True, (*saved["at"], *saved["size"]))
+        return
+    mon = monitor_of(win, jreq("monitors") or [])
+    if mon:
+        snap(win, mon, "max")
+
+
+MINIMIZED = "special:minimized"
+# Set while a restore runs: focusing a minimized window briefly shows its workspace, and the
+# watcher must not hide it again mid-restore.
+RESTORING = RUNTIME / "atlas-snap" / "restoring"
+
+
+def restoring():
+    try:
+        return time.time() - RESTORING.stat().st_mtime < 3
+    except OSError:
+        return False
+
+
+def hide_minimized_workspace():
+    """Focusing any window in a hidden special workspace makes Hyprland *show* that
+    workspace over the screen, so make sure it is not left on show."""
+    for m in jreq("monitors") or []:
+        if (m.get("specialWorkspace") or {}).get("name") == MINIMIZED:
+            # toggle_special acts on the focused monitor; on any other it would *show* it there.
+            if not m.get("focused"):
+                dispatch(f'hl.dsp.focus({{ monitor = "{m["name"]}" }})')
+            dispatch('hl.dsp.workspace.toggle_special("minimized")')
+
+
+def minimized_windows():
+    return [c for c in jreq("clients") or [] if (c.get("workspace") or {}).get("name") == MINIMIZED]
+
+
+def cmd_minimize():
+    win = jreq("activewindow")
+    if not win or not win.get("address"):
+        return
+    workspace = (win.get("workspace") or {}).get("id")
+    dispatch(f'hl.dsp.window.move({{ workspace = "{MINIMIZED}", follow = false }})')
+    # Unfocusable while minimized: otherwise Hyprland can re-focus it (e.g. when it was the last
+    # window on the workspace and the pointer crosses the bar), which shows it again.
+    dispatch(f'hl.dsp.window.set_prop({{ prop = "no_focus", value = "1", window = "address:{win["address"]}" }})')
+    # Hyprland leaves keyboard focus on the window it just hid. The next focus refresh (e.g. a
+    # mouse move) then re-focuses it and pops the whole hidden workspace back on screen. Hand
+    # focus to the most recently used window left on that workspace instead.
+    others = [c for c in jreq("clients") or []
+              if (c.get("workspace") or {}).get("id") == workspace and c["address"] != win["address"]
+              and not c.get("hidden")]
+    others.sort(key=lambda c: c.get("focusHistoryID", 1_000_000))
+    if others:
+        dispatch(f'hl.dsp.focus({{ window = "address:{others[0]["address"]}" }})')
+    elif workspace is not None:
+        dispatch(f'hl.dsp.focus({{ workspace = "{workspace}" }})')
+    hide_minimized_workspace()
+    # The windows left behind spread out over the space it freed, as if it had closed.
+    ws_name = (win.get("workspace") or {}).get("name", "")
+    if auto_enabled() and ws_name and not ws_name.startswith("special"):
+        cmd_reflow(ws_name)
+
+
+def cmd_restore(address=None):
+    """Bring minimized windows (or just `address`) back to the workspace on screen."""
+    ws = (jreq("activeworkspace") or {}).get("id")
+    if ws is None:
+        return
+    targets = [c for c in minimized_windows() if address in (None, c["address"])]
+    RESTORING.parent.mkdir(parents=True, exist_ok=True)
+    RESTORING.touch()
+    for c in targets:
+        dispatch(f'hl.dsp.window.set_prop({{ prop = "no_focus", value = "0", window = "address:{c["address"]}" }})')
+        dispatch(f'hl.dsp.focus({{ window = "address:{c["address"]}" }})')
+        dispatch(f'hl.dsp.window.move({{ workspace = "{ws}" }})')
+    hide_minimized_workspace()
+    if targets:  # leave the last restored window focused and on top
+        dispatch(f'hl.dsp.focus({{ window = "address:{targets[-1]["address"]}" }})')
+    RESTORING.unlink(missing_ok=True)
+    # Slot the restored window(s) back into the layout instead of on top of the others.
+    if targets and auto_enabled():
+        if len(targets) == 1:
+            cmd_arrange(targets[0]["address"])
+        else:
+            cmd_reflow((jreq("activeworkspace") or {}).get("name", ""))
+
+
+def cmd_list():
+    """Minimized windows as JSON, for the bar widget."""
+    print(json.dumps([{"address": c["address"], "class": c.get("class", ""), "title": c.get("title", "")}
+                      for c in minimized_windows()]))
+
+
+def cmd_menu():
+    options = [f"{icon}\t{label}" for icon, label, _ in MENU]
+    pick = subprocess.run(["omarchy-menu-select", "Snap layout", *options], capture_output=True, text=True)
+    chosen = pick.stdout.strip()
+    for _, label, zone in MENU:
+        if label == chosen:
+            cmd_zone(zone)
+            return
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "menu"
+    if cmd in ("menu", "--menu"):
+        cmd_menu()
+    elif cmd in ZONES:
+        cmd_zone(cmd)
+    elif cmd == "place-free":
+        # place-free MONITOR [--from X,Y,W,H] ADDRESS...
+        args = sys.argv[2:]
+        old = None
+        if len(args) >= 3 and args[1] == "--from":
+            x, y, w, h = (float(v) for v in args[2].split(","))
+            old = {"x": x, "y": y, "w": w, "h": h}
+            args = [args[0]] + args[3:]
+        if args:
+            cmd_place_free(args[0], args[1:], old)
+    elif cmd == "arrange" and len(sys.argv) > 2:
+        cmd_arrange(sys.argv[2])
+    elif cmd == "reflow" and len(sys.argv) > 2:
+        cmd_reflow(sys.argv[2])
+    elif cmd == "auto":
+        cmd_auto(sys.argv[2] if len(sys.argv) > 2 else None)
+    elif cmd == "restore":
+        cmd_restore(sys.argv[2] if len(sys.argv) > 2 else None)
+    elif cmd in ("run", "maximize", "minimize", "list"):
+        {"run": cmd_run, "maximize": cmd_maximize, "minimize": cmd_minimize, "list": cmd_list}[cmd]()
+    else:
+        print(__doc__)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

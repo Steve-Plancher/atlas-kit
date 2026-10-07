@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+
+home = Path.home()
+base = home / '.local/state/omarchy/notifications'
+history = base / 'history'
+images = base / 'images'
+
+
+def stem_for_name(name: str) -> str:
+    return name[:-5] if name.endswith('.json') else name
+
+
+def safe_file(name: str):
+    # History file names are timestamp-id.json. Keep deletes inside history.
+    clean = Path(name).name
+    if not clean.endswith('.json'):
+        clean += '.json'
+    return history / clean
+
+
+def cleanup_images(stem: str):
+    if not images.exists():
+        return
+    for img in images.glob(stem + '-*'):
+        try:
+            img.unlink()
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
+
+
+def list_history():
+    rows = []
+    history.mkdir(parents=True, exist_ok=True)
+    files = sorted(history.glob('*.json'), key=lambda p: p.name, reverse=True)
+    for p in files[:100]:
+        try:
+            data = json.loads(p.read_text(errors='replace'))
+        except Exception:
+            continue
+        rows.append({
+            'file': p.name,
+            'app': str(data.get('app') or data.get('appName') or ''),
+            'appIcon': str(data.get('appIcon') or ''),
+            'summary': str(data.get('summary') or ''),
+            'body': str(data.get('body') or ''),
+            'glyph': str(data.get('glyph') or ''),
+            'urgency': int(data.get('urgency') or 1),
+            'timestamp': float(data.get('timestamp') or 0),
+        })
+    return rows
+
+
+def clear_files(names):
+    count = 0
+    for name in names:
+        p = safe_file(name)
+        if p.exists():
+            stem = stem_for_name(p.name)
+            p.unlink()
+            cleanup_images(stem)
+            count += 1
+    return count
+
+
+def clear_all():
+    names = [p.name for p in history.glob('*.json')] if history.exists() else []
+    return clear_files(names)
+
+cmd = sys.argv[1] if len(sys.argv) > 1 else 'list'
+if cmd == 'list':
+    print(json.dumps({'ok': True, 'rows': list_history()}, ensure_ascii=False))
+elif cmd == 'clear-all':
+    print(json.dumps({'ok': True, 'deleted': clear_all()}))
+elif cmd == 'clear-selected':
+    print(json.dumps({'ok': True, 'deleted': clear_files(sys.argv[2:])}))
+else:
+    print(json.dumps({'ok': False, 'error': 'unknown command'}))
+    sys.exit(2)

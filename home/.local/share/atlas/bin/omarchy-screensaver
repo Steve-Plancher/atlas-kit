@@ -1,0 +1,71 @@
+#!/bin/bash
+
+# A.T.L.A.S screensaver: fork of /usr/share/omarchy/bin/omarchy-screensaver that plays only
+# HUD-style TTE effects in the A.T.L.A.S blue palette. Picked up because
+# ~/.config/hypr/hyprland.lua puts ~/.local/share/atlas/bin first on Hyprland's PATH.
+
+screensaver_in_focus() {
+  hyprctl activewindow -j | jq -e '.class == "org.omarchy.screensaver"' >/dev/null 2>&1
+}
+
+exit_screensaver() {
+  hyprctl eval 'hl.config({ cursor = { invisible = false } })' &>/dev/null || hyprctl keyword cursor:invisible false &>/dev/null || true
+  pkill -x ttfx 2>/dev/null
+  pkill -f '[o]rg.omarchy.screensaver' 2>/dev/null
+  exit 0
+}
+
+# Exit the screensaver on signals and input from keyboard and mouse
+trap exit_screensaver SIGINT SIGTERM SIGHUP SIGQUIT
+
+printf '\033]11;rgb:00/00/00\007'  # Set background color to black
+
+hyprctl eval 'hl.config({ cursor = { invisible = true } })' &>/dev/null || hyprctl keyword cursor:invisible true &>/dev/null
+
+tty=$(tty 2>/dev/null)
+
+# Terminals allocate the pty at the default 80x24 and only resize it once the
+# compositor has told the window how big it is. ttfx measures the terminal once,
+# at startup, so starting it before the resize lands sizes an 80x24 canvas and
+# paints it into the corner of a fullscreen window.
+wait_for_terminal_resize() {
+  local deadline=$((SECONDS + 2))
+  while ((SECONDS < deadline)) && [[ $(stty size 2>/dev/null) == "24 80" ]]; do
+    sleep 0.02
+  done
+}
+
+wait_for_terminal_resize
+
+# A.T.L.A.S palette (matches the live HUD wallpaper)
+DEEP=1478e6 CYAN=35c4ff ICE=a8ecff WHITE=ffffff DIM=0a3a66
+FINAL=(--final-gradient-stops $DEEP $CYAN $ICE --final-gradient-direction diagonal)
+
+pick_effect() {
+  case $((RANDOM % 11)) in
+  0) effect=(decrypt --ciphertext-colors $DIM $DEEP $CYAN "${FINAL[@]}") ;;
+  1) effect=(matrix --rain-color-gradient $DIM $DEEP $CYAN --highlight-color $ICE --rain-time 6 "${FINAL[@]}") ;;
+  2) effect=(synthgrid --grid-gradient-stops $DIM $DEEP $CYAN --text-gradient-stops $DEEP $CYAN $ICE) ;;
+  3) effect=(beams --beam-gradient-stops $WHITE $ICE $CYAN "${FINAL[@]}") ;;
+  4) effect=(laseretch --laser-gradient-stops $WHITE $ICE $CYAN --spark-gradient-stops $WHITE $ICE $CYAN --cool-gradient-stops $CYAN $DEEP "${FINAL[@]}") ;;
+  5) effect=(binarypath --binary-colors $DIM $DEEP $CYAN "${FINAL[@]}") ;;
+  6) effect=(vhstape --glitch-line-colors $WHITE $CYAN $DEEP --glitch-wave-colors $ICE $CYAN $DEEP --noise-colors $DIM $DEEP $ICE "${FINAL[@]}") ;;
+  7) effect=(errorcorrect --error-color ff6b6b --correct-color $ICE "${FINAL[@]}") ;;
+  8) effect=(rings --ring-colors $DEEP $CYAN $ICE "${FINAL[@]}") ;;
+  9) effect=(orbittingvolley "${FINAL[@]}") ;;
+  10) effect=(spotlights "${FINAL[@]}") ;;
+  esac
+}
+
+while true; do
+  pick_effect
+  ttfx -i ~/.config/omarchy/branding/screensaver.txt \
+    --frame-rate 30 --canvas-width 0 --canvas-height 0 --reuse-canvas --anchor-canvas c --anchor-text c \
+    --no-eol --no-restore-cursor "${effect[@]}" &
+
+  while pgrep -t "${tty#/dev/}" -x ttfx >/dev/null; do
+    if read -n1 -t 1 || ! screensaver_in_focus; then
+      exit_screensaver
+    fi
+  done
+done

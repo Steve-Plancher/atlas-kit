@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "com.plancher-labs.atlas-hud",
+  "name": "A.T.L.A.S Live HUD",
+  "version": "1.0.0",
+  "author": "Claude / Steve Plancher",
+  "description": "Animated JARVIS-style HUD layered over the A.T.L.A.S wallpaper: rotating rings, radar sweep, holo-pad ripples, circuit pulses and live system telemetry.",
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Hud.qml"
+  }
+}

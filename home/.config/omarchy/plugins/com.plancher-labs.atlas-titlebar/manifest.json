@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "com.plancher-labs.atlas-titlebar",
+  "name": "A.T.L.A.S Tactical Command Glass Titlebar",
+  "version": "1.0.0",
+  "author": "Hermes Agent / Steve Plancher",
+  "description": "Per-active-window Tactical Glass + Command Bar overlay for A.T.L.A.S OS.",
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Titlebar.qml"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  // Extend the Quickshell Omarchy menu with JSONC.
+  //
+  // IDs are object keys. The parent is inferred from the dotted id, so
+  // "personal.notes" appears under "personal", and "personal" appears on the
+  // root menu. Reuse an existing id to override/extend it.
+  //
+  // Fields:
+  //   icon        Nerd Font glyph shown in the icon column.
+  //   label       Visible row title.
+  //   action      Shell command to run. If omitted, the row is a submenu.
+  //   target      Existing submenu id to open. Use for links/aliases.
+  //   provider    Runtime provider function/command returning JSON rows.
+  //   aliases     alternate `omarchy menu summon <name>` routes; also searchable.
+  //   description Optional subtitle and extra search text.
+  //   when        Shell condition; hide row when it fails.
+  //   checked     Shell condition; append ✓ when it succeeds.
+  //
+  // Examples:
+  // "personal": {"icon":"","label":"Personal"},
+  // "personal.notes": {"icon":"󰎞","label":"Notes","action":"omarchy-launch-editor ~/notes"},
+  // "personal.files": {"icon":"","label":"Files","action":"uwsm-app -- nautilus ~/Documents"},
+  //
+  // Only use provider when a provider_name function or command named "name"
+  // returns JSON rows. Static submenus only need dotted ids.
+  //
+  // Example: replace the default About action by reusing the same id. Existing
+  // fields are kept unless overridden.
+  // "about": {"icon":"","label":"About","action":"omarchy-launch-or-focus-tui \"zsh -c 'fastfetch; read -k 1'\""},
+
+  // ---- A.T.L.A.S Protocols (atlas-protocol bar widget) ----
+  "protocol": {"icon":"󰒃","label":"Protocols","aliases":["protocols","code","codes","mode"]},
+  "protocol.standby": {"icon":"󰚩","label":"Standby","description":"Everyday A.T.L.A.S blue","action":"/home/steve/.local/bin/atlas-protocol standby","checked":"/home/steve/.local/bin/atlas-protocol is standby"},
+  "protocol.code-red": {"icon":"󰀦","label":"Code Red","description":"Crimson colors","action":"/home/steve/.local/bin/atlas-protocol code-red","checked":"/home/steve/.local/bin/atlas-protocol is code-red"},
+  "protocol.clean-slate": {"icon":"󰀘","label":"Clean Slate","description":"Amber colors","action":"/home/steve/.local/bin/atlas-protocol clean-slate","checked":"/home/steve/.local/bin/atlas-protocol is clean-slate"},
+  "protocol.house-party": {"icon":"󰝚","label":"House Party","description":"Violet colors","action":"/home/steve/.local/bin/atlas-protocol house-party","checked":"/home/steve/.local/bin/atlas-protocol is house-party"},
+}

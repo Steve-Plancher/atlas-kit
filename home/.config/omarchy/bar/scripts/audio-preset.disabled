@@ -1,0 +1,60 @@
+#!/bin/bash
+# Omarchy bar helper: show and switch EasyEffects presets.
+#
+# EasyEffects only flushes its rc file on exit, so the live preset has to come
+# from the CLI. That costs ~0.2s -- fine on the bar's poll interval, but far too
+# slow for the menu to evaluate once per row, so the answer is cached here and
+# the menu's `checked` conditions read the cache instead.
+#
+# Output and input presets are tracked separately: `easyeffects -s` reports both
+# in one call, and a mic preset must not clear the checkmark on the output one.
+
+CACHE_OUT="$HOME/.cache/omarchy/audio-preset-output"
+CACHE_IN="$HOME/.cache/omarchy/audio-preset-input"
+
+running() { pgrep -x easyeffects >/dev/null 2>&1; }
+
+refresh_cache() {
+  local both
+  both=$(timeout 3 easyeffects -s 2>/dev/null) || return 1
+  printf '%s' "$(sed -n 's/^output: *//p' <<<"$both" | head -1 | xargs)" > "$CACHE_OUT"
+  printf '%s' "$(sed -n 's/^input: *//p'  <<<"$both" | head -1 | xargs)" > "$CACHE_IN"
+}
+
+case "$1" in
+  status)
+    if ! running; then
+      printf '{"text":"󰝟","tooltip":"EasyEffects is not running","class":"inactive"}\n'
+      exit 0
+    fi
+    refresh_cache
+    preset=$(cat "$CACHE_OUT" 2>/dev/null)
+    [ -z "$preset" ] && preset="none"
+    printf '{"text":"󰋋 %s","tooltip":"Audio preset: %s — click to switch","class":"active"}\n' \
+      "$preset" "$preset"
+    ;;
+  set)
+    shift
+    [ -z "$1" ] && exit 1
+    running || { nohup easyeffects --hide-window >/dev/null 2>&1 & sleep 4; }
+    easyeffects -l "$1" >/dev/null 2>&1
+    # Write through immediately so the menu checkmark is right before the next poll.
+    if [ -f "$HOME/.local/share/easyeffects/input/$1.json" ]; then
+      printf '%s' "$1" > "$CACHE_IN"
+    else
+      printf '%s' "$1" > "$CACHE_OUT"
+    fi
+    notify-send -a "Audio" -t 1500 "Audio preset" "$1" 2>/dev/null
+    ;;
+  is)
+    shift
+    [ "$(cat "$CACHE_OUT" 2>/dev/null)" = "$1" ] || [ "$(cat "$CACHE_IN" 2>/dev/null)" = "$1" ]
+    ;;
+  current)
+    printf 'output: %s\ninput: %s\n' "$(cat "$CACHE_OUT" 2>/dev/null)" "$(cat "$CACHE_IN" 2>/dev/null)"
+    ;;
+  *)
+    echo "usage: audio-preset {status|set <name>|is <name>|current}" >&2
+    exit 1
+    ;;
+esac

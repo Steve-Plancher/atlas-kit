@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+case "${1:-status}" in
+  status|*) printf '{"text":"N","tooltip":"Notifications","class":"active"}
+' ;;
+esac

@@ -1,0 +1,14 @@
+#!/bin/bash
+# A.T.L.A.S fork of omarchy-theme-bg-switcher (left double-click on the desktop):
+# same picker, plus the A.T.L.A.S Protocol wallpapers. Picking one of those
+# engages that protocol (see the omarchy-theme-bg-set fork next to this file).
+# Wins over the packaged copy because ~/.local/share/atlas/bin is first on PATH
+# (set in ~/.config/hypr/hyprland.lua).
+
+theme_name=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null)
+current_background=$(readlink -f "$HOME/.local/state/omarchy/current/background" 2>/dev/null)
+
+dirs=("$HOME/.local/state/omarchy/current/theme/backgrounds" "$HOME/.config/omarchy/backgrounds/$theme_name")
+[[ $theme_name == hackerman ]] && dirs+=("$HOME/.local/share/atlas-protocol/backgrounds")
+
+omarchy-menu-images --selected "$current_background" "${dirs[@]}"

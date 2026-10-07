@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""A.T.L.A.S Glass: see-through windows so the wallpaper/HUD shows behind them.
+
+  atlas-glass status              JSON state
+  atlas-glass set LEVEL           see-through percent, 0 (solid) .. 60
+  atlas-glass nudge DELTA         change LEVEL by DELTA (e.g. 5 or -5)
+  atlas-glass blur on|off|toggle  frosted blur behind windows
+  atlas-glass fullscreen on|off|toggle   also apply to fullscreen windows
+  atlas-glass apply               push saved state into the running Hyprland
+
+State lives in ~/.local/state/atlas-glass/glass.conf (key=value), which
+~/.config/hypr/atlas_glass.lua reads at config load so the setting survives
+reloads and reboots. It is deliberately NOT under ~/.config/hypr: saving a file
+there makes Hyprland auto-reload on every slider step.
+"""
+import json
+import os
+import subprocess
+import sys
+
+STATE_DIR = os.path.expanduser("~/.local/state/atlas-glass")
+STATE = os.path.join(STATE_DIR, "glass.conf")
+MAX_LEVEL = 60
+DEFAULTS = {"level": 0, "blur": False, "fullscreen": False}
+
+
+def load():
+    state = dict(DEFAULTS)
+    try:
+        with open(STATE) as f:
+            for line in f:
+                key, _, value = line.strip().partition("=")
+                if key == "level":
+                    state["level"] = clamp(int(float(value)))
+                elif key in ("blur", "fullscreen"):
+                    state[key] = value.strip() == "true"
+    except (OSError, ValueError):
+        pass
+    return state
+
+
+def save(state):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    tmp = STATE + ".tmp"
+    with open(tmp, "w") as f:
+        f.write("level=%d\n" % state["level"])
+        f.write("blur=%s\n" % ("true" if state["blur"] else "false"))
+        f.write("fullscreen=%s\n" % ("true" if state["fullscreen"] else "false"))
+    os.replace(tmp, STATE)
+
+
+def clamp(level):
+    return max(0, min(MAX_LEVEL, int(round(level))))
+
+
+def lua_for(state):
+    # Keep in sync with ~/.config/hypr/atlas_glass.lua.
+    active = 1.0 - state["level"] / 100.0
+    # Unfocused windows sit a touch further back, which gives depth.
+    inactive = max(0.3, active - (0.06 if state["level"] > 0 else 0.04))
+    fullscreen = active if state["fullscreen"] else 1.0
+    blur = "true" if state["blur"] and state["level"] > 0 else "false"
+    # Solid overrides Omarchy's per-app opacity rules too (rule defined in atlas_glass.lua).
+    solid = "true" if state["level"] == 0 else "false"
+    return (
+        "hl.config({ decoration = { active_opacity = %.3f, inactive_opacity = %.3f, "
+        "fullscreen_opacity = %.3f, blur = { enabled = %s, size = 5, passes = 2, "
+        "noise = 0.02, vibrancy = 0.2 } } }); "
+        "if not atlas_glass_solid_rule then atlas_glass_solid_rule = hl.window_rule({ "
+        "name = 'atlas-glass-solid', match = { class = '.*' }, "
+        "opacity = '1 override 1 override 1 override' }) end; "
+        "atlas_glass_solid_rule:set_enabled(%s); hl.exec_scheduled_prop_refresh_immediately()"
+        % (active, inactive, fullscreen, blur, solid)
+    )
+
+
+def apply(state):
+    subprocess.run(["hyprctl", "eval", lua_for(state)], stdout=subprocess.DEVNULL, check=False)
+
+
+def on_off(arg, current):
+    if arg == "toggle":
+        return not current
+    if arg in ("on", "true", "1"):
+        return True
+    if arg in ("off", "false", "0"):
+        return False
+    raise SystemExit("expected on|off|toggle")
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else "status"
+    state = load()
+    if cmd == "status":
+        pass
+    elif cmd == "set" and len(argv) > 2:
+        state["level"] = clamp(float(argv[2]))
+    elif cmd == "nudge" and len(argv) > 2:
+        state["level"] = clamp(state["level"] + float(argv[2]))
+    elif cmd in ("blur", "fullscreen") and len(argv) > 2:
+        state[cmd] = on_off(argv[2], state[cmd])
+    elif cmd == "apply":
+        apply(state)
+        return
+    else:
+        print(__doc__.strip(), file=sys.stderr)
+        sys.exit(2)
+    if cmd != "status":
+        save(state)
+        apply(state)
+    state["max"] = MAX_LEVEL
+    print(json.dumps(state))
+
+
+if __name__ == "__main__":
+    main(sys.argv)

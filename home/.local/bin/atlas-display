@@ -1,0 +1,872 @@
+#!/usr/bin/env python3
+"""A.T.L.A.S Display: one source of truth for monitor layout on Omarchy/Hyprland.
+
+Store      ~/.config/hypr/atlas-monitors.json   every monitor ever configured, keyed by its
+                                                EDID description, so settings follow the
+                                                physical monitor whatever port or dock it is on.
+Generated  ~/.config/hypr/monitors.lua          what Hyprland loads; rewritten from the store.
+
+Everything that changes displays goes through here: the Display panel on the bar, the
+Arrange button (nwg-displays, staged and merged back), and the dock daemon. Nothing else
+should write monitors.lua.
+
+Commands
+  state                         JSON for the panel
+  set NAME [--mode M] [--scale S] [--transform T] [--position XxY] [--enabled 0|1]
+  dock-policy on|off            turn the laptop panel off while 2+ externals are connected
+  arrange                       open nwg-displays; merge what it saves into the store
+  import FILE                   merge an nwg-displays monitors.lua into the store
+  write                         regenerate monitors.lua from the store and reload
+  daemon                        enforce dock policy + never-all-screens-off, event driven
+"""
+import json
+import os
+import re
+import select
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+HOME = Path.home()
+HYPR = HOME / ".config/hypr"
+STORE = HYPR / "atlas-monitors.json"
+MONITORS_LUA = HYPR / "monitors.lua"
+RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
+STATE_DIR = RUNTIME / "atlas-display"
+# The laptop panel is switched off through Omarchy's own toggle, never by atlas-display
+# directly: Omarchy's monitor watcher re-enables the panel on every monitor change unless
+# that toggle is set, and it also turns the panel back on whenever no external is active.
+OMARCHY_INTERNAL_OFF = HOME / ".local/state/omarchy/toggles/hypr/internal-monitor-disable.lua"
+# Marks that the dock policy (not the user) switched the panel off, so only the policy undoes it.
+POLICY_MARKER = STATE_DIR / "laptop-off-by-dock-policy"
+STAGE_DIR = HOME / ".local/state/atlas-display/nwg-stage"
+INTERNAL = re.compile(r"^(eDP|LVDS|DSI)-")
+GDK_SCALE = 2
+
+
+# ── Hyprland ─────────────────────────────────────────────────────────────────
+
+def hypr_env():
+    env = os.environ.copy()
+    env.setdefault("XDG_RUNTIME_DIR", str(RUNTIME))
+    if not env.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        root = RUNTIME / "hypr"
+        dirs = sorted((p for p in root.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime, reverse=True) if root.exists() else []
+        if dirs:
+            env["HYPRLAND_INSTANCE_SIGNATURE"] = dirs[0].name
+    return env
+
+
+def hyprctl(*args):
+    p = subprocess.run(["hyprctl", *args], text=True, capture_output=True, env=hypr_env())
+    out = (p.stdout or "").strip()
+    return p.returncode, out, (p.stderr or "").strip()
+
+
+def monitors():
+    code, out, err = hyprctl("monitors", "all", "-j")
+    if code != 0:
+        raise SystemExit(f"hyprctl monitors failed: {err or out}")
+    return json.loads(out)
+
+
+def is_placeholder(mon):
+    """Hyprland's stand-in output when no real screen is left ("FALLBACK", or a headless output).
+    It reports as enabled but displays nothing, so it must never count as a screen. The same goes
+    for a monitor whose mode set failed (e.g. a dock's video stream couldn't start): it shows 0x0."""
+    name = mon.get("name", "")
+    if not mon.get("disabled") and (mon.get("width", 1) <= 0 or mon.get("height", 1) <= 0):
+        return True
+    return name == "FALLBACK" or name.startswith("HEADLESS")
+
+
+def real_screens_on(mons):
+    return [m for m in mons if not m.get("disabled") and not is_placeholder(m)]
+
+
+def is_internal(mon):
+    return bool(INTERNAL.match(mon.get("name", "")))
+
+
+def lid_closed():
+    """The ACPI lid switch. None when this machine has no lid button to read."""
+    for state in Path("/proc/acpi/button/lid").glob("*/state"):
+        try:
+            return "closed" in state.read_text().lower()
+        except OSError:
+            pass
+    return None
+
+
+def lua_str(s):
+    return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def fmt_num(v):
+    v = float(v)
+    return str(int(v)) if v == int(v) else f"{v:g}"
+
+
+# ── Store ────────────────────────────────────────────────────────────────────
+
+def load_store():
+    if STORE.exists():
+        try:
+            data = json.loads(STORE.read_text())
+            data.setdefault("monitors", {})
+            data.setdefault("laptopOffWhenDocked", False)
+            return data
+        except Exception:
+            pass
+    return {"version": 1, "laptopOffWhenDocked": False, "monitors": {}}
+
+
+def save_store(store):
+    HYPR.mkdir(parents=True, exist_ok=True)
+    tmp = STORE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(store, indent=2) + "\n")
+    tmp.replace(STORE)
+
+
+def mode_of(mon):
+    return f"{mon['width']}x{mon['height']}@{mon['refreshRate']:.2f}"
+
+
+def entry_from_live(mon):
+    return {
+        "mode": mode_of(mon),
+        "position": f"{mon['x']}x{mon['y']}",
+        "scale": round(float(mon["scale"]), 4),
+        "transform": int(mon["transform"]),
+        "enabled": not mon.get("disabled", False),
+        "lastName": mon["name"],
+        "internal": is_internal(mon),
+    }
+
+
+def friendly_label(desc, name):
+    if INTERNAL.match(name or ""):
+        return "Laptop"
+    words = (desc or name).split()
+    # "GIGA-BYTE TECHNOLOGY CO. LTD. G32QC A 21340B010048" -> "G32QC", "Lenovo Group Limited R27q-30 U533CZVW" -> "R27q-30"
+    model = [w for w in words[:-1] if re.search(r"\d", w) and not re.fullmatch(r"0x[0-9a-fA-F]+", w)]
+    return model[-1] if model else (words[0] if words else name)
+
+
+# ── monitors.lua generation ──────────────────────────────────────────────────
+
+HEADER = """-- Managed by A.T.L.A.S Display (~/.local/bin/atlas-display). Do not edit by hand:
+-- change displays from the Display panel on the bar, or its Arrange button.
+-- Source of truth: ~/.config/hypr/atlas-monitors.json (monitors are matched by model and
+-- serial number, so each keeps its settings on any port, dock or reconnect).
+-- See https://wiki.hypr.land/Configuring/Basics/Monitors/
+
+-- Monitors not listed below: preferred mode, placed automatically.
+local omarchy_monitor_scale = "auto"
+hl.monitor({ output = "", mode = "preferred", position = "auto", scale = omarchy_monitor_scale })
+"""
+
+FOOTER = f"""
+-- GDK_SCALE: whole-number factor GTK draws its own UI at (X11/XWayland apps).
+local omarchy_gdk_scale = {GDK_SCALE}
+hl.env("GDK_SCALE", tostring(omarchy_gdk_scale))
+"""
+
+
+def rule_lua(desc, e):
+    target = lua_str("desc:" + desc)
+    # The laptop panel is never written as disabled here; turning it off goes through
+    # Omarchy's internal-monitor toggle (see OMARCHY_INTERNAL_OFF).
+    if not e.get("enabled", True) and not e.get("internal"):
+        return f"hl.monitor({{ output = {target}, disabled = true }})"
+    return (f"hl.monitor({{ output = {target}, mode = {lua_str(e['mode'])}, "
+            f"position = {lua_str(e['position'])}, scale = {fmt_num(e['scale'])}, "
+            f"transform = {int(e.get('transform', 0))} }})")
+
+
+def render_lua(store):
+    parts = [HEADER]
+    for desc in sorted(store["monitors"], key=lambda d: (not store["monitors"][d].get("internal"), d)):
+        e = store["monitors"][desc]
+        parts.append(f"\n-- {desc} (last seen as {e.get('lastName', '?')})\n{rule_lua(desc, e)}\n")
+    parts.append(FOOTER)
+    return "".join(parts)
+
+
+def write_and_reload(store):
+    """Write store + monitors.lua, reload Hyprland, and roll both back on config errors."""
+    old_store = STORE.read_text() if STORE.exists() else None
+    old_lua = MONITORS_LUA.read_text() if MONITORS_LUA.exists() else None
+    save_store(store)
+    MONITORS_LUA.write_text(render_lua(store))
+    hyprctl("reload")
+    time.sleep(0.4)
+    _, errors, _ = hyprctl("configerrors")
+    if errors.strip():
+        if old_store is None:
+            STORE.unlink(missing_ok=True)
+        else:
+            STORE.write_text(old_store)
+        if old_lua is not None:
+            MONITORS_LUA.write_text(old_lua)
+        hyprctl("reload")
+        raise RuntimeError("Hyprland rejected the monitor config, rolled back: " + errors.strip())
+
+
+# ── Laptop panel on/off (delegated to Omarchy) ───────────────────────────────
+
+def laptop_panel(action):
+    """Run `omarchy-hyprland-monitor-internal on|off`; returns (ok, message)."""
+    p = subprocess.run(["omarchy-hyprland-monitor-internal", action], text=True,
+                       capture_output=True, env=hypr_env())
+    msg = (p.stderr or p.stdout or "").strip().splitlines()
+    return p.returncode == 0, (msg[-1] if msg else "")
+
+
+# ── Layout helpers ───────────────────────────────────────────────────────────
+
+def parse_pos(pos):
+    m = re.fullmatch(r"(-?\d+)x(-?\d+)", str(pos))
+    return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+
+
+def parse_mode(mode):
+    m = re.match(r"(\d+)x(\d+)", str(mode))
+    return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+
+
+def logical_size(e):
+    w, h = parse_mode(e["mode"])
+    if int(e.get("transform", 0)) % 2 == 1:
+        w, h = h, w
+    s = float(e.get("scale", 1)) or 1
+    return w / s, h / s
+
+
+def clean_scale(scale, width, height):
+    """Hyprland only takes scales that divide the mode into whole logical pixels (1/120 steps)."""
+    from math import gcd
+    g = gcd(width * 120, height * 120)
+    k = int(float(scale) * 120 + 0.5)
+    k = min(max(k, 1), g)
+    while g % k:
+        k += 1
+    return k / 120
+
+
+def reflow(store, desc, before, connected):
+    """Shift monitors right of / below a monitor whose logical size changed, so rotating or
+    rescaling one screen never overlaps or leaves a gap beside its neighbours. Only monitors
+    connected right now move: the store also holds other places' layouts (dock vs. home)."""
+    e = store["monitors"][desc]
+    ow, oh = before
+    nw, nh = logical_size(e)
+    x, y = parse_pos(e["position"])
+    dx, dy = round(nw - ow), round(nh - oh)
+    if not dx and not dy:
+        return
+    for other_desc, o in store["monitors"].items():
+        if other_desc == desc or other_desc not in connected:
+            continue
+        ox, oy = parse_pos(o["position"])
+        nx = ox + dx if dx and ox >= x + ow - 1 else ox
+        ny = oy + dy if dy and oy >= y + oh - 1 else oy
+        o["position"] = f"{nx}x{ny}"
+
+
+# ── Commands ─────────────────────────────────────────────────────────────────
+
+def cmd_state():
+    store = load_store()
+    mons = monitors()
+    externals = [m for m in real_screens_on(mons) if not is_internal(m)]
+    out = []
+    for m in mons:
+        desc = m.get("description") or m["name"]
+        modes = []
+        for md in m.get("availableModes", []):
+            mm = re.fullmatch(r"(\d+)x(\d+)@([\d.]+)Hz", md)
+            if mm:
+                modes.append({"width": int(mm.group(1)), "height": int(mm.group(2)), "refresh": float(mm.group(3))})
+        out.append({
+            "name": m["name"],
+            "description": desc,
+            "label": friendly_label(desc, m["name"]),
+            "internal": is_internal(m),
+            "enabled": not m.get("disabled", False),
+            "focused": bool(m.get("focused")),
+            "width": m["width"], "height": m["height"],
+            "refresh": round(float(m["refreshRate"]), 2),
+            "scale": round(float(m["scale"]), 4),
+            "transform": int(m["transform"]),
+            "x": m["x"], "y": m["y"],
+            "modes": modes,
+            "saved": desc in store["monitors"],
+        })
+    out.sort(key=lambda d: (not d["internal"], d["x"], d["name"]))
+    print(json.dumps({
+        "displays": out,
+        "laptopOffWhenDocked": bool(store.get("laptopOffWhenDocked")),
+        "docked": len(externals) >= 2,
+    }))
+
+
+def cmd_set(argv):
+    if not argv:
+        raise SystemExit("usage: atlas-display set NAME [--mode M] [--scale S] [--transform T] [--position XxY] [--enabled 0|1]")
+    name, opts = argv[0], argv[1:]
+    args = {}
+    it = iter(opts)
+    for flag in it:
+        if not flag.startswith("--"):
+            raise SystemExit(f"unexpected argument {flag}")
+        args[flag[2:]] = next(it, None)
+
+    mons = monitors()
+    mon = next((m for m in mons if m["name"] == name), None)
+    if not mon:
+        raise SystemExit(f"no such monitor: {name}")
+    desc = mon.get("description") or name
+    store = load_store()
+    # Seed every connected monitor on first touch, so reflow sees real neighbours.
+    for m in mons:
+        d = m.get("description") or m["name"]
+        if d not in store["monitors"] and not m.get("disabled"):
+            store["monitors"][d] = entry_from_live(m)
+    e = store["monitors"].setdefault(desc, entry_from_live(mon))
+    e["lastName"] = name
+    e["internal"] = is_internal(mon)
+    before = logical_size(e)
+
+    if "enabled" in args:
+        want = args["enabled"] in ("1", "true", "on", "yes")
+        enabled_now = real_screens_on(mons)
+        if not want and len(enabled_now) <= 1 and not mon.get("disabled"):
+            raise SystemExit("refusing to turn off the last active display")
+        if e["internal"]:
+            POLICY_MARKER.unlink(missing_ok=True)  # the user decides now, not the dock policy
+            # Leave a trace: Omarchy's SUPER+CTRL+Delete toggle shows the same notification, so this
+            # is the only way to tell afterwards whether the Display panel turned the laptop off.
+            subprocess.run(["logger", "-t", "atlas-display",
+                            f"laptop panel turned {'on' if want else 'off'} from the Display panel"],
+                           capture_output=True)
+            ok, msg = laptop_panel("on" if want else "off")
+            if not ok:
+                raise SystemExit(msg or "Omarchy refused to change the laptop display")
+            print("ok")
+            return
+        e["enabled"] = want
+    if args.get("mode"):
+        e["mode"] = args["mode"].removesuffix("Hz")
+    if args.get("transform") is not None:
+        e["transform"] = int(args["transform"]) % 8
+    if args.get("position"):
+        e["position"] = args["position"]
+    if args.get("scale") or args.get("mode"):
+        w, h = parse_mode(e["mode"])
+        e["scale"] = clean_scale(args.get("scale") or e["scale"], w, h)
+    if e.get("enabled", True):
+        reflow(store, desc, before, {m.get("description") or m["name"] for m in mons})
+    write_and_reload(store)
+    print("ok")
+
+
+def cmd_dock_policy(argv):
+    if not argv or argv[0] not in ("on", "off"):
+        raise SystemExit("usage: atlas-display dock-policy on|off")
+    store = load_store()
+    store["laptopOffWhenDocked"] = argv[0] == "on"
+    save_store(store)
+    enforce(quiet=True)
+    print("ok")
+
+
+HL_MONITOR = re.compile(r"hl\.monitor\(\{(.*?)\}\)", re.S)
+FIELD = re.compile(r'(\w+)\s*=\s*("(?:[^"\\]|\\.)*"|[^,\n}]+)')
+
+
+def cmd_import(argv):
+    """Merge nwg-displays' monitors.lua output into the store (positions, modes, scale, rotation)."""
+    path = Path(argv[0]) if argv else STAGE_DIR / "monitors.lua"
+    if not path.exists():
+        raise SystemExit(f"nothing to import at {path}")
+    live = {m["name"]: m for m in monitors()}
+    store = load_store()
+    changed = 0
+    for block in HL_MONITOR.findall(path.read_text()):
+        fields = {}
+        for k, v in FIELD.findall(block):
+            v = v.strip()
+            fields[k] = json.loads(v) if v.startswith('"') else v
+        output = str(fields.get("output", ""))
+        if not output:
+            continue
+        if output.startswith("desc:"):
+            desc = output[5:]
+            mon = next((m for m in live.values() if m.get("description") == desc), None)
+        else:
+            mon = live.get(output)
+            desc = (mon or {}).get("description") or output
+        base = store["monitors"].get(desc) or (entry_from_live(mon) if mon else None)
+        if base is None:
+            continue
+        if mon:
+            base["lastName"] = mon["name"]
+            base["internal"] = is_internal(mon)
+        if str(fields.get("disabled", "")).strip() == "true":
+            if not base.get("internal"):
+                base["enabled"] = False
+        else:
+            base["enabled"] = True
+            if "mode" in fields:
+                base["mode"] = str(fields["mode"]).removesuffix("Hz")
+            if "position" in fields:
+                base["position"] = str(fields["position"])
+            if "scale" in fields:
+                w, h = parse_mode(base["mode"])
+                base["scale"] = clean_scale(fields["scale"], w, h)
+            base["transform"] = int(str(fields.get("transform", 0)).strip() or 0)
+        store["monitors"][desc] = base
+        changed += 1
+    if changed:
+        write_and_reload(store)
+    print(f"imported {changed} monitor(s)")
+
+
+def cmd_arrange():
+    """Open nwg-displays against a staging file and merge every save back live."""
+    STAGE_DIR.mkdir(parents=True, exist_ok=True)
+    stage_conf = STAGE_DIR / "monitors.conf"
+    stage_lua = STAGE_DIR / "monitors.lua"
+    # Match monitors by description so identical models on a dock stay distinct.
+    cfg_path = HOME / ".config/nwg-displays/config"
+    try:
+        cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+    except Exception:
+        cfg = {}
+    if cfg.get("use-desc") is not True:
+        cfg["use-desc"] = True
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
+    stage_lua.unlink(missing_ok=True)
+
+    gui = subprocess.Popen(["nwg-displays", "-m", str(stage_conf), "-w", str(STAGE_DIR / "workspaces.conf")])
+    watcher = subprocess.Popen(
+        ["inotifywait", "-m", "-q", "-e", "close_write,moved_to", "--format", "%f", str(STAGE_DIR)],
+        stdout=subprocess.PIPE, text=True)
+    try:
+        import selectors
+        sel = selectors.DefaultSelector()
+        sel.register(watcher.stdout, selectors.EVENT_READ)
+        while gui.poll() is None:
+            if sel.select(timeout=0.5):
+                line = watcher.stdout.readline().strip()
+                if line == "monitors.lua":
+                    time.sleep(0.2)
+                    try:
+                        cmd_import([str(stage_lua)])
+                    except (SystemExit, RuntimeError) as exc:
+                        print(exc, file=sys.stderr)
+    finally:
+        watcher.terminate()
+
+
+# ── Dock daemon ──────────────────────────────────────────────────────────────
+
+def enforce(quiet=False):
+    """Dock policy: with "laptop screen off when docked" on, switch the panel off while two or
+    more externals are active and back on when that stops being true. Only undoes what the
+    policy itself did (POLICY_MARKER); manual choices and Omarchy's clamshell are left alone,
+    and Omarchy already restores the panel whenever no external display is active."""
+    store = load_store()
+    mons = monitors()
+    internal = next((m for m in mons if is_internal(m)), None)
+    if not internal:
+        return "no internal panel"
+    externals_on = [m for m in real_screens_on(mons) if not is_internal(m)]
+    docked = len(externals_on) >= 2
+    result = "no change"
+    if store.get("laptopOffWhenDocked") and docked:
+        if not OMARCHY_INTERNAL_OFF.exists():
+            ok, msg = laptop_panel("off")
+            if ok:
+                STATE_DIR.mkdir(parents=True, exist_ok=True)
+                POLICY_MARKER.touch()
+                result = "docked: laptop panel off"
+            else:
+                result = f"docked: could not turn laptop panel off ({msg})"
+    elif POLICY_MARKER.exists():
+        POLICY_MARKER.unlink(missing_ok=True)
+        if OMARCHY_INTERNAL_OFF.exists():
+            laptop_panel("on")
+            result = "undocked or policy off: laptop panel on"
+    if not quiet:
+        print(result, flush=True)
+    return result
+
+
+def internal_active_workspace():
+    """Id of the workspace the laptop panel is showing, or None if the panel is off."""
+    for m in monitors():
+        if is_internal(m) and not m.get("disabled"):
+            return str((m.get("activeWorkspace") or {}).get("id") or "") or None
+    return None
+
+
+def laptop_geometry():
+    """The laptop panel's last layout box in global logical px ("X,Y,W,H"), from the store."""
+    for e in load_store()["monitors"].values():
+        if e.get("internal"):
+            x, y = parse_pos(e["position"])
+            w, h = logical_size(e)
+            return f"{x},{y},{int(w)},{int(h)}"
+    return None
+
+
+def place_in_free_space(monitor_name, windows):
+    """Hand the arrived windows to atlas-snap, which finds non-overlapping spots for them."""
+    args = [str(HOME / ".local/bin/atlas-snap"), "place-free", monitor_name]
+    geo = laptop_geometry()
+    if geo:
+        args += ["--from", geo]
+    time.sleep(0.2)  # let Hyprland finish the workspace move before reading positions
+    p = subprocess.run(args + [c["address"] for c in windows], text=True, capture_output=True, env=hypr_env())
+    for line in (p.stdout + p.stderr).strip().splitlines():
+        print(f"  {line}", flush=True)
+
+
+def follow_moved_workspace(ws_id, monitor_name):
+    """When the laptop panel turns off (lid closed / clamshell), Hyprland moves its workspaces
+    to an external monitor but leaves that monitor showing whatever it had. Keep every window
+    in view without ever swapping the screen to an empty workspace:
+      laptop workspace empty                -> leave the external screen as it is
+      external screen showing nothing       -> show the laptop's workspace there
+      both have windows                     -> bring the laptop's windows onto the workspace
+                                               already on screen (as Windows does)"""
+    if not re.fullmatch(r"-?\d+", ws_id or ""):
+        return
+    if internal_active_workspace() is not None:
+        return  # panel came back on before we acted: nothing to follow
+    code, out, _ = hyprctl("clients", "-j")
+    clients = json.loads(out) if code == 0 and out else []
+    laptop_windows = [c for c in clients if str((c.get("workspace") or {}).get("id")) == ws_id]
+    if not laptop_windows:
+        print(f"laptop panel off: its workspace {ws_id} is empty, leaving {monitor_name} as it is", flush=True)
+        return
+    ext = next((m for m in monitors() if m["name"] == monitor_name and not m.get("disabled")), None)
+    shown = str(((ext or {}).get("activeWorkspace") or {}).get("id", ""))
+    if not ext or shown == ws_id:
+        return
+    shown_windows = [c for c in clients if str((c.get("workspace") or {}).get("id")) == shown]
+    if not shown_windows:
+        hyprctl("dispatch", f'hl.dsp.focus({{ workspace = "{ws_id}" }})')
+        print(f"laptop panel off: showing its workspace {ws_id} on {monitor_name}", flush=True)
+        place_in_free_space(monitor_name, laptop_windows)
+        return
+    # Both screens had windows: move the laptop's onto the workspace on screen, in one eval so
+    # the brief focus hop to the laptop workspace doesn't flash, then keep the view where it was.
+    lua = []
+    for c in laptop_windows:
+        lua.append(f'hl.dispatch(hl.dsp.focus({{ window = "address:{c["address"]}" }}))')
+        lua.append(f'hl.dispatch(hl.dsp.window.move({{ workspace = "{shown}", follow = false }}))')
+    lua.append(f'hl.dispatch(hl.dsp.focus({{ workspace = "{shown}" }}))')
+    lua.append(f'hl.dispatch(hl.dsp.focus({{ window = "address:{laptop_windows[-1]["address"]}" }}))')
+    hyprctl("eval", "; ".join(lua))
+    print(f"laptop panel off: moved {len(laptop_windows)} window(s) from workspace {ws_id} "
+          f"onto workspace {shown} on {monitor_name}", flush=True)
+    place_in_free_space(monitor_name, laptop_windows)
+
+
+OMARCHY_CLAMSHELL = HOME / ".local/state/omarchy/toggles/hypr/internal-monitor-clamshell.lua"
+NO_SCREEN_GRACE = 1.5   # seconds with no active screen before stepping in (hotplug blips are shorter)
+NO_SCREEN_ATTEMPTS = 3  # recoveries that failed to stick before assuming someone else is in charge
+
+
+def socket_json(request):
+    """A JSON request straight to Hyprland's request socket: no hyprctl process spawned."""
+    sig = hypr_env().get("HYPRLAND_INSTANCE_SIGNATURE")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        s.connect(str(RUNTIME / "hypr" / str(sig) / ".socket.sock"))
+        s.sendall(request.encode())
+        chunks = []
+        while True:
+            data = s.recv(65536)
+            if not data:
+                break
+            chunks.append(data)
+    return json.loads(b"".join(chunks))
+
+
+def socket_monitors():
+    return socket_json("j/monitors all")
+
+
+def rescue_offscreen_windows():
+    """Floating windows keep their absolute position when a monitor goes away (unplugged, lid
+    closed, rearranged), so a window that lived on it can end up outside every screen: focused
+    but invisible. Put any floating window whose centre is on no active screen back into free
+    space on the screen that now holds its workspace. Windows only partly off an edge are left."""
+    mons = real_screens_on(socket_monitors())
+    if not mons:
+        return
+
+    def on_a_screen(cx, cy):
+        for m in mons:
+            w, h = m["width"] / m["scale"], m["height"] / m["scale"]
+            if m.get("transform", 0) % 2:
+                w, h = h, w
+            if m["x"] <= cx < m["x"] + w and m["y"] <= cy < m["y"] + h:
+                return True
+        return False
+
+    by_id = {m["id"]: m["name"] for m in mons}
+    focused = next((m["name"] for m in mons if m.get("focused")), mons[0]["name"])
+    lost = {}
+    for c in socket_json("j/clients"):
+        ws = (c.get("workspace") or {}).get("name", "")
+        if not c.get("floating") or c.get("hidden") or ws.startswith("special:"):
+            continue
+        (x, y), (w, h) = c["at"], c["size"]
+        if on_a_screen(x + w / 2, y + h / 2):
+            continue
+        lost.setdefault(by_id.get(c.get("monitor"), focused), []).append(c)
+    for monitor_name, windows in lost.items():
+        print(f"rescuing {len(windows)} off-screen window(s) onto {monitor_name}: "
+              + ", ".join(w.get("class", "?") for w in windows), flush=True)
+        p = subprocess.run([str(HOME / ".local/bin/atlas-snap"), "place-free", monitor_name,
+                            *[w["address"] for w in windows]], text=True, capture_output=True, env=hypr_env())
+        for line in (p.stdout + p.stderr).strip().splitlines():
+            print(f"  {line}", flush=True)
+
+
+def show_recent_workspace():
+    """After a recovery the screen may come back on an empty workspace while your windows sit on
+    another one. Switch each real screen showing an empty workspace to the workspace (on that
+    screen) holding the most recently used window."""
+    mons = real_screens_on(socket_monitors())
+    clients = [c for c in socket_json("j/clients")
+               if not (c.get("workspace") or {}).get("name", "").startswith("special:")]
+    for m in mons:
+        shown = (m.get("activeWorkspace") or {}).get("id")
+        here = [c for c in clients if c.get("monitor") == m["id"]]
+        if not here or any((c.get("workspace") or {}).get("id") == shown for c in here):
+            continue
+        recent = min(here, key=lambda c: c.get("focusHistoryID", 1_000_000))
+        ws = (recent.get("workspace") or {}).get("id")
+        hyprctl("dispatch", f'hl.dsp.focus({{ workspace = "{ws}" }})')
+        print(f"  {m['name']} was showing empty workspace {shown}: switched to workspace {ws}", flush=True)
+
+
+def ensure_a_screen(guard):
+    """Never leave the session with no screen on.
+
+    Unplugging the external monitor while the lid is closed makes logind suspend at once, before
+    Omarchy's monitor watcher can undo clamshell mode. After resume no new hotplug event arrives,
+    so the laptop panel stays disabled with nothing else connected: a black screen with an
+    invisible lock screen. Polled every couple of seconds (it also catches the post-resume case),
+    this turns the laptop panel back on through Omarchy's own recovery commands.
+
+    It stands down in two cases, because neither is that black screen: the lid being closed with
+    an external still connected (it is only asleep, and clamshell owns the panel), and its own
+    recoveries failing to stick, which means something else is turning the panel off in reply.
+
+    Returns the delay in seconds before it wants to look again, or None when all is well."""
+    mons = socket_monitors()
+    if real_screens_on(mons):
+        guard["since"] = None
+        guard["attempts"] = 0
+        guard["lid_held"] = False
+        if guard.get("gave_up"):
+            guard["gave_up"] = False
+            print("a screen is back on: screen guard re-armed", flush=True)
+        return None
+    if not any(is_internal(m) for m in mons):
+        return None
+    if guard.get("gave_up"):
+        return None
+    # An external that is merely asleep is not the black screen this guard exists for: the case
+    # it rescues is the external being *gone*. Forcing the panel on behind a closed lid only
+    # starts a fight with clamshell, which turns it straight back off (once cost 2000 cycles).
+    # Either signal counts: this machine's /proc lid has read "open" while shut before, and
+    # Omarchy's own clamshell flag is the more direct statement that clamshell owns the panel.
+    clamshell_holds = lid_closed() is True or OMARCHY_CLAMSHELL.exists()
+    if clamshell_holds and any(not is_internal(m) and not is_placeholder(m) for m in mons):
+        guard["since"] = None
+        if not guard.get("lid_held"):
+            guard["lid_held"] = True
+            print("no screen is on, but clamshell holds the panel with an external still "
+                  "connected: leaving it alone", flush=True)
+        return None
+    guard["lid_held"] = False
+    now = time.monotonic()
+    if guard["since"] is None:
+        guard["since"] = now
+        return NO_SCREEN_GRACE
+    if now - guard["since"] < NO_SCREEN_GRACE:
+        return NO_SCREEN_GRACE - (now - guard["since"])
+    guard["since"] = None
+    guard["attempts"] = guard.get("attempts", 0) + 1
+    if guard["attempts"] > NO_SCREEN_ATTEMPTS:
+        guard["gave_up"] = True
+        print(f"no screen is on, but {NO_SCREEN_ATTEMPTS} recoveries did not stick: standing down "
+              "until a screen comes back (something else keeps turning the panel off)", flush=True)
+        return None
+    print("no screen is on: turning the laptop panel back on", flush=True)
+    POLICY_MARKER.unlink(missing_ok=True)
+    for cmd in (["omarchy-hyprland-monitor-internal", "recover"], ["omarchy-hyprland-monitor-clamshell"]):
+        subprocess.run(cmd, capture_output=True, env=hypr_env())
+    time.sleep(0.5)
+    if not real_screens_on(socket_monitors()):
+        # Omarchy still keeps it off: its recover step treats the FALLBACK placeholder as an active
+        # external screen and skips, and clamshell keeps it off while the lid reads closed.
+        OMARCHY_CLAMSHELL.unlink(missing_ok=True)
+        OMARCHY_INTERNAL_OFF.unlink(missing_ok=True)
+        hyprctl("reload")
+        time.sleep(0.5)
+        hyprctl("dispatch", 'hl.dsp.dpms({ action = "enable" })')
+        print("  cleared Omarchy's clamshell/internal-off flags and reloaded", flush=True)
+    time.sleep(1.0)
+    rescue_offscreen_windows()
+    show_recent_workspace()
+    return 2.0  # look once more to confirm the screen really came back
+
+
+def watch_sleep():
+    """logind's PrepareForSleep signal via gdbus: a line arrives on suspend and on resume."""
+    try:
+        return subprocess.Popen(
+            ["gdbus", "monitor", "--system", "--dest", "org.freedesktop.login1",
+             "--object-path", "/org/freedesktop/login1"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
+    except OSError:
+        return None
+
+
+def cmd_daemon():
+    """Event driven: sleeps until Hyprland reports a monitor/config change, logind reports a
+    resume, or a scheduled check falls due. Nothing runs while nothing happens."""
+    enforce()
+    laptop_ws = internal_active_workspace()
+    screen_guard = {"since": None, "attempts": 0, "gave_up": False, "lid_held": False}
+    sleep_watch = watch_sleep()
+    while True:
+        sig = hypr_env().get("HYPRLAND_INSTANCE_SIGNATURE")
+        sock_path = RUNTIME / "hypr" / str(sig) / ".socket2.sock"
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+                s.connect(str(sock_path))
+                buf = b""
+                due = {"enforce": 0.0, "follow": 0.0, "screen": time.monotonic(), "rescue": time.monotonic()}
+                follow_monitor = ""
+                while True:
+                    now = time.monotonic()
+                    pending = [t for t in due.values() if t]
+                    timeout = max(0.0, min(pending) - now) if pending else None
+                    sources = [s] + ([sleep_watch.stdout] if sleep_watch and sleep_watch.stdout else [])
+                    ready, _, _ = select.select(sources, [], [], timeout)
+
+                    if sleep_watch and sleep_watch.stdout in ready:
+                        line = sleep_watch.stdout.readline()
+                        if not line:  # gdbus exited; restart it
+                            sleep_watch = watch_sleep()
+                        elif "PrepareForSleep" in line and "false" in line:
+                            # Resumed: no hotplug event follows, so look for a dark session.
+                            print("resumed from sleep: checking a screen is on", flush=True)
+                            due["screen"] = time.monotonic() + 1.0
+                            due["enforce"] = time.monotonic() + 1.0
+                            due["rescue"] = time.monotonic() + 3.0
+
+                    if s in ready:
+                        chunk = s.recv(4096)
+                        if not chunk:
+                            break
+                        buf += chunk
+                        *lines, buf = buf.split(b"\n")
+                        for line in lines:
+                            event, _, data = line.partition(b">>")
+                            if event in (b"monitoradded", b"monitoraddedv2", b"monitorremoved",
+                                         b"monitorremovedv2", b"configreloaded"):
+                                due["enforce"] = time.monotonic() + 0.8
+                                due["screen"] = time.monotonic() + 0.5
+                                # after the screen guard and workspace follow have settled
+                                due["rescue"] = time.monotonic() + 2.5
+                            if event in (b"workspacev2", b"focusedmonv2", b"monitoraddedv2"):
+                                current = internal_active_workspace()
+                                if current is not None:
+                                    laptop_ws = current
+                            elif event == b"moveworkspacev2":
+                                # data: WORKSPACEID,WORKSPACENAME,MONNAME
+                                parts = data.decode(errors="replace").split(",")
+                                if (len(parts) >= 3 and parts[0] == laptop_ws and not INTERNAL.match(parts[-1])
+                                        and parts[-1] != "FALLBACK" and not parts[-1].startswith("HEADLESS")):
+                                    due["follow"] = time.monotonic() + 0.3
+                                    follow_monitor = parts[-1]
+
+                    now = time.monotonic()
+                    if due["screen"] and now >= due["screen"]:
+                        due["screen"] = 0.0
+                        try:
+                            again = ensure_a_screen(screen_guard)
+                            if again:
+                                due["screen"] = time.monotonic() + again
+                        except Exception as exc:
+                            print(f"screen guard error: {exc}", file=sys.stderr, flush=True)
+                    if due["follow"] and now >= due["follow"]:
+                        due["follow"] = 0.0
+                        try:
+                            follow_moved_workspace(laptop_ws, follow_monitor)
+                        except Exception as exc:
+                            print(f"error: {exc}", file=sys.stderr, flush=True)
+                    if due["rescue"] and now >= due["rescue"]:
+                        due["rescue"] = 0.0
+                        try:
+                            rescue_offscreen_windows()
+                        except Exception as exc:
+                            print(f"rescue error: {exc}", file=sys.stderr, flush=True)
+                    if due["enforce"] and now >= due["enforce"]:
+                        due["enforce"] = 0.0
+                        try:
+                            enforce()
+                            current = internal_active_workspace()
+                            if current is not None:
+                                laptop_ws = current
+                        except Exception as exc:
+                            print(f"error: {exc}", file=sys.stderr, flush=True)
+        except Exception as exc:
+            print(f"socket: {exc}; retrying", file=sys.stderr, flush=True)
+        time.sleep(2)
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__)
+        return
+    cmd, rest = sys.argv[1], sys.argv[2:]
+    try:
+        if cmd == "state":
+            cmd_state()
+        elif cmd == "set":
+            cmd_set(rest)
+        elif cmd == "dock-policy":
+            cmd_dock_policy(rest)
+        elif cmd == "import":
+            cmd_import(rest)
+        elif cmd == "arrange":
+            cmd_arrange()
+        elif cmd == "write":
+            write_and_reload(load_store())
+            print("ok")
+        elif cmd == "daemon":
+            cmd_daemon()
+        else:
+            raise SystemExit(f"unknown command {cmd}")
+    except RuntimeError as exc:
+        raise SystemExit(str(exc))
+
+
+if __name__ == "__main__":
+    main()

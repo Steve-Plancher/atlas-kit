@@ -1,0 +1,7 @@
+# Third-party Omarchy shell plugins: <folder> <git url> <commit>
+akitaonrails.ai-usagebar https://github.com/akitaonrails/ai-usagebar.git f274e035f1cd981c600f5acedf7655b1b5c628a5
+io.github.pablo-merino.altswitch https://github.com/Pablo-Merino/omarchy-altswitch.git 7703e1ad200f66d5cf35e274d1c453d88270e663
+jankeesvw.workspace-name https://github.com/jankeesvw/omarchy-workspace-name.git 1327dfbca02811aa111bbc72bdcbd69f922e487f
+robzolkos.github https://github.com/robzolkos/omarchy-github.git 039ecaa5d191fa03bb27611ccc3aedeeec1bc1cf
+rosakodu.dock https://github.com/rosakodu/omarchy-dock.git 4cf9beb25281823fb5f0480d3b97ce906ddae88d
+stappmus.activity-monitor https://github.com/stappmus/omarchy-activity-monitor.git b25a98c7ff2a688ab74d86d2be42249e2db2f9cf

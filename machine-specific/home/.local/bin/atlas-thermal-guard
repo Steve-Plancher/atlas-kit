@@ -1,0 +1,249 @@
+#!/usr/bin/env python3
+"""A.T.L.A.S thermal guard: cool the laptop down automatically when the CPU runs hot.
+
+This Latitude's embedded controller ignores OS fan commands (dell_smm accepts pwm writes but the
+EC keeps its own speed), so instead of spinning the fan harder this lowers the heat itself:
+  CPU package crosses HOT  -> switch to the power-saver profile (Dell "quiet" thermal mode)
+  CPU package falls to COOL -> restore the profile that was active before
+It goes through power-profiles-daemon, so Omarchy's power widget always shows the truth, and it
+never touches Omarchy's saved per-AC/battery preference. If the profile is changed by hand (or by
+Omarchy on a power source change) while the guard is engaged, the guard steps aside.
+
+The CPU itself raises the alarm: HOT and COOL are written to the package sensor's two programmable
+trip points, and the package thermal interrupt wakes this process when either is crossed. There is
+no temperature polling loop; the guard sleeps until the hardware says something happened, then
+samples for a few seconds to confirm the crossing was not a one-second turbo spike. Arming the
+trips needs group write on the sysfs attributes, which 99-atlas-thermal-trip.rules grants at boot;
+without it the guard says so and falls back to sampling every 2 s.
+
+Settings: ~/.config/atlas-thermal-guard.conf  (HOT=82, COOL=65, NOTIFY=0)
+"""
+import glob
+import json
+import os
+import select
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HOME = Path.home()
+CONF = HOME / ".config/atlas-thermal-guard.conf"
+STATE = HOME / ".local/state/atlas-thermal-guard/state.json"
+INTERVAL = 2
+GUARD_PROFILE = "power-saver"
+# After a trip fires, confirm over this many 1 s samples before acting: the package spikes into the
+# high 80s for a second at a time under turbo whether or not anything is really running hot.
+CONFIRM_HOT = 4
+CONFIRM_COOL = 6
+# Re-check this often even with no event, so a missed interrupt (or a suspend, which clears the
+# trips) cannot strand the machine in power-saver.
+HEARTBEAT = 60
+
+
+def settings():
+    values = {"HOT": 82, "COOL": 65, "NOTIFY": 0}
+    try:
+        for line in CONF.read_text().splitlines():
+            key, _, val = line.partition("=")
+            if key.strip() in values and val.strip().isdigit():
+                values[key.strip()] = int(val.strip())
+    except OSError:
+        pass
+    return values
+
+
+def package_zone():
+    for zone in glob.glob("/sys/class/thermal/thermal_zone*"):
+        try:
+            if Path(zone, "type").read_text().strip() == "x86_pkg_temp":
+                return Path(zone)
+        except OSError:
+            continue
+    return None
+
+
+ZONE = package_zone()
+
+
+def package_temp():
+    try:
+        return int(Path(ZONE, "temp").read_text()) / 1000
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def arm_trips(cfg):
+    """Point the package sensor's two thresholds at HOT and COOL.
+
+    Returns True when both are armed. They read back as -274000 (disabled) after a boot or a
+    resume, so this is called again from the heartbeat rather than only at startup.
+    """
+    if ZONE is None:
+        return False
+    wanted = {"trip_point_0_temp": cfg["HOT"] * 1000, "trip_point_1_temp": cfg["COOL"] * 1000}
+    for name, value in wanted.items():
+        path = Path(ZONE, name)
+        try:
+            if int(path.read_text()) != value:
+                path.write_text(str(value))
+        except (OSError, ValueError):
+            return False
+    return True
+
+
+def trips_armed(cfg):
+    try:
+        return (int(Path(ZONE, "trip_point_0_temp").read_text()) == cfg["HOT"] * 1000
+                and int(Path(ZONE, "trip_point_1_temp").read_text()) == cfg["COOL"] * 1000)
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def confirm(samples, test):
+    """Sample once a second and report whether every reading agrees with the trip."""
+    readings = []
+    for _ in range(samples):
+        t = package_temp()
+        if t is not None:
+            readings.append(t)
+        time.sleep(1)
+    return bool(readings) and test(readings), (sum(readings) / len(readings) if readings else None)
+
+
+def profile():
+    # busctl, not powerprofilesctl: that one is a Python program, and starting it every 2 s
+    # caused CPU spikes of its own.
+    p = subprocess.run(["busctl", "get-property", "net.hadess.PowerProfiles", "/net/hadess/PowerProfiles",
+                        "net.hadess.PowerProfiles", "ActiveProfile"], capture_output=True, text=True)
+    out = p.stdout.strip()
+    return out[3:-1] if p.returncode == 0 and out.startswith('s "') else None
+
+
+def set_profile(name):
+    return subprocess.run(["powerprofilesctl", "set", name], capture_output=True).returncode == 0
+
+
+def notify(cfg, title, body):
+    # Off by default: the guard engages several times an hour under load, and a desktop popup for
+    # each one is noise. Set NOTIFY=1 in the conf file to get them back.
+    if not cfg.get("NOTIFY"):
+        return
+    subprocess.run(["notify-send", "-a", "A.T.L.A.S", "-i", "temperature", title, body],
+                   capture_output=True)
+
+
+def load_state():
+    try:
+        return json.loads(STATE.read_text())
+    except Exception:
+        return {"engaged": False, "previous": None}
+
+
+def save_state(state):
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    STATE.write_text(json.dumps(state))
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def release(state, reason):
+    current = profile()
+    previous = state.get("previous")
+    if current == GUARD_PROFILE and previous and previous != GUARD_PROFILE:
+        set_profile(previous)
+        log(f"released ({reason}): restored {previous}")
+    else:
+        log(f"released ({reason}): profile is {current}, left as is")
+    state.update(engaged=False, previous=None)
+    save_state(state)
+
+
+def main():
+    state = load_state()
+
+    def on_stop(signum, frame):
+        if state.get("engaged"):
+            release(state, "guard stopped")
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, on_stop)
+    signal.signal(signal.SIGINT, on_stop)
+
+    cfg = settings()
+    armed = arm_trips(cfg)
+    if armed:
+        log(f"armed CPU trip points, waiting on the sensor ({cfg})")
+    else:
+        log(f"cannot write trip points -- falling back to {INTERVAL}s sampling ({cfg})")
+
+    # Kernel thermal events, read as an unprivileged stream. The guard blocks here; a crossing of
+    # either trip point wakes it within milliseconds.
+    monitor = None
+
+    def start_monitor():
+        nonlocal monitor
+        if monitor is None:
+            monitor = subprocess.Popen(["udevadm", "monitor", "--udev", "--subsystem-match=thermal"],
+                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+
+    if armed:
+        start_monitor()
+
+    def wait_for_event(timeout):
+        """Block until the sensor reports a crossing, or the heartbeat comes due."""
+        if monitor is None or monitor.poll() is not None:
+            time.sleep(min(timeout, INTERVAL))
+            return False
+        ready, _, _ = select.select([monitor.stdout], [], [], timeout)
+        if not ready:
+            return False
+        line = monitor.stdout.readline()
+        # Each event is several lines; drain whatever arrived with it.
+        while select.select([monitor.stdout], [], [], 0)[0]:
+            if not monitor.stdout.readline():
+                break
+        return bool(line)
+
+    while True:
+        cfg = settings()
+        # A resume clears the trips, and a conf edit changes where they belong. When the udev rule
+        # is installed after the guard started, this is also where it picks the trips up, so
+        # granting access does not need a restart.
+        if not trips_armed(cfg) and arm_trips(cfg) and not armed:
+            armed = True
+            start_monitor()
+            log("trip points became writable -- switched from sampling to sensor events")
+        t = package_temp()
+        current = profile()
+
+        if state["engaged"]:
+            if current != GUARD_PROFILE:
+                # Changed by hand or by Omarchy on a power source change: step aside.
+                state.update(engaged=False, previous=None)
+                save_state(state)
+                log(f"profile changed to {current} while engaged; stepping aside")
+            elif t is not None and t <= cfg["COOL"]:
+                cooled, avg = confirm(CONFIRM_COOL, lambda r: max(r) <= cfg["COOL"])
+                if cooled:
+                    release(state, f"cooled to {avg:.0f}C")
+                    notify(cfg, "Temperature back to normal",
+                           f"CPU at {avg:.0f}°C, power profile restored.")
+        elif t is not None and t >= cfg["HOT"]:
+            hot, avg = confirm(CONFIRM_HOT, lambda r: sum(r) / len(r) >= cfg["HOT"])
+            current = profile()
+            if hot and current and current != GUARD_PROFILE and set_profile(GUARD_PROFILE):
+                state.update(engaged=True, previous=current)
+                save_state(state)
+                log(f"engaged at {avg:.0f}C: {current} -> {GUARD_PROFILE}")
+                notify(cfg, "Cooling down",
+                       f"CPU averaged {avg:.0f}°C — switched to power saver until it cools.")
+
+        wait_for_event(HEARTBEAT)
+
+
+if __name__ == "__main__":
+    main()

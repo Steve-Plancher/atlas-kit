@@ -1,0 +1,13 @@
+[Unit]
+Description=A.T.L.A.S Display dock policy (laptop panel on/off, never all screens off)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/atlas-display daemon
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target

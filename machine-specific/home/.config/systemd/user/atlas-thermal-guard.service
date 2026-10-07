@@ -1,0 +1,13 @@
+[Unit]
+Description=A.T.L.A.S thermal guard (power saver while the CPU runs hot)
+After=graphical-session.target power-profiles-daemon.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/atlas-thermal-guard
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

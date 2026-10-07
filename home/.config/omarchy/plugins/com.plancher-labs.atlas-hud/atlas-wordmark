@@ -1,0 +1,31 @@
+#!/bin/bash
+# Switch the A.T.L.A.S wordmark animation. The HUD polls this file every 2s,
+# so a change lands live -- no shell restart, no editing QML.
+#
+#   atlas-wordmark                 show current mode
+#   atlas-wordmark <mode>          switch to it
+#   atlas-wordmark next            cycle through the five effects
+#   atlas-wordmark off             back to the plain painted wordmark
+#
+# Modes: off power-on sweep glitch reactive holo
+set -u
+state=$HOME/.local/state/atlas-hud/wordmark
+modes=(power-on sweep glitch reactive holo)
+current() { local m; m=$(cat "$state" 2>/dev/null); echo "${m:-off}"; }
+
+case "${1:-status}" in
+  status|"") current ;;
+  list) printf '%s\n' off "${modes[@]}" ;;
+  next)
+    cur=$(current); nxt=${modes[0]}
+    for i in "${!modes[@]}"; do
+      [[ ${modes[i]} == "$cur" ]] && nxt=${modes[$(((i + 1) % ${#modes[@]}))]} && break
+    done
+    mkdir -p "${state%/*}"; echo "$nxt" > "$state"; echo "$nxt" ;;
+  off|power-on|sweep|glitch|reactive|holo)
+    mkdir -p "${state%/*}"; echo "$1" > "$state"; echo "$1" ;;
+  *)
+    echo "usage: atlas-wordmark [status|next|list|off|${modes[*]// /|}]" >&2
+    echo "current: $(current)" >&2
+    exit 1 ;;
+esac

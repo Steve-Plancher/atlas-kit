@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# A.T.L.A.S fan hold.
+#
+# Measured on this machine (Latitude, dell_smm_hwmon, hwmon4):
+#   * the EC DOES accept OS fan commands -- a write to pwm1 spins the fan up
+#   * but it resets pwm1 to 0 within a few seconds, so the command must be
+#     re-asserted on a timer to stick
+#   * pwm1=255 reads back as 128 (level 1, ~1390 RPM of a 4600 RPM fan) while
+#     the EC's own sensors read cool; the EC ramps past level 1 itself once
+#     real load heats the package, so on-demand "max" is not available
+#   * pwm1_enable=2 (hand control back to the BIOS) is rejected by the driver
+#
+# 'hold' runs in the foreground and needs one auth prompt. Ctrl-C releases the
+# fan back to the EC. Run it in a spare terminal while load-testing.
+#
+#   atlas-fan hold    hold the fan on until Ctrl-C
+#   atlas-fan status  current pwm, RPM and package temp
+#   atlas-fan watch   status once a second, no privileges needed
+
+HWMON=/sys/class/hwmon/hwmon4
+CORETEMP=/sys/class/hwmon/hwmon5/temp1_input
+
+die() { echo "atlas-fan: $*" >&2; exit 1; }
+[[ -e $HWMON/pwm1 ]] || die "no dell_smm pwm1 at $HWMON (hwmon numbering may have shifted)"
+
+line() {
+  printf 'pwm=%-4s rpm=%-5s/%s temp=%sC\n' \
+    "$(cat $HWMON/pwm1)" "$(cat $HWMON/fan1_input)" "$(cat $HWMON/fan1_max)" \
+    "$(( $(cat $CORETEMP) / 1000 ))"
+}
+
+case "${1:-status}" in
+  hold)
+    echo "holding fan on -- Ctrl-C to release it back to the EC"
+    pkexec bash -c '
+      trap "echo 0 > /sys/class/hwmon/hwmon4/pwm1 2>/dev/null; echo; echo released" EXIT
+      echo 1 > /sys/class/hwmon/hwmon4/pwm1_enable
+      while :; do
+        echo 255 > /sys/class/hwmon/hwmon4/pwm1 2>/dev/null
+        printf "\rpwm=%s rpm=%s temp=%sC  " \
+          "$(cat /sys/class/hwmon/hwmon4/pwm1)" \
+          "$(cat /sys/class/hwmon/hwmon4/fan1_input)" \
+          "$(( $(cat /sys/class/hwmon/hwmon5/temp1_input) / 1000 ))"
+        sleep 1
+      done'
+    ;;
+  status) line ;;
+  watch)  while :; do printf '\r%s  ' "$(line | tr -d '\n')"; sleep 1; done ;;
+  *) die "usage: atlas-fan {hold|status|watch}" ;;
+esac

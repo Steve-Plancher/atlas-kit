@@ -1,0 +1,56 @@
+#!/bin/bash
+# A.T.L.A.S agent launcher: start or resume ONE named coding agent in its own terminal.
+#
+#   atlas-agent start  <claude|codex|opencode|pi|ori>
+#   atlas-agent resume <claude|codex|opencode|pi|ori>
+#
+# Omarchy's own `omarchy-agent` only ever launches the DEFAULT agent
+# (~/.config/omarchy/defaults/agent), which is why the Agents widget could only open Claude.
+# This takes the agent as an argument instead and leaves that default alone. Per-agent flags
+# mirror the case block in /usr/share/omarchy/bin/omarchy-agent — re-check it after an
+# `omarchy update` if a CLI changes its spelling of "don't stop to ask".
+
+set -uo pipefail
+
+action=${1:-}
+agent=${2:-}
+
+usage() {
+  echo "usage: atlas-agent start|resume <claude|codex|opencode|pi|ori>" >&2
+  exit 2
+}
+
+[[ $action == "start" || $action == "resume" ]] || usage
+[[ -n $agent ]] || usage
+
+case "$agent" in
+claude) start=(claude --permission-mode auto); resume=(claude --continue) ;;
+codex) start=(codex --approve-for-me); resume=(codex resume --last) ;;
+opencode) start=(opencode --auto); resume=(opencode --continue) ;;
+pi) start=(pi); resume=(pi) ;;
+ori) start=(ori code); resume=(ori code) ;;
+*)
+  echo "atlas-agent: unknown agent '$agent'" >&2
+  exit 1
+  ;;
+esac
+
+if ! command -v "${start[0]}" >/dev/null 2>&1; then
+  echo "atlas-agent: $agent is not installed (${start[0]} not on PATH)" >&2
+  omarchy-notification-send "Agent not installed" "$agent is not on PATH" -t 4000 2>/dev/null
+  exit 1
+fi
+
+# Agents refuse to remember trust for $HOME, so start in the work directory — the same thing
+# omarchy-agent does for the keybinding and the menu.
+[[ -d $HOME/Work ]] && cd "$HOME/Work"
+
+if [[ $action == "resume" ]]; then
+  command=("${resume[@]}")
+else
+  command=("${start[@]}")
+fi
+
+# The shared app-id keeps every agent window in one window class, which the A.T.L.A.S title
+# bars, snap rules and float-by-default rule already target.
+exec omarchy-launch-tui --app-id=org.omarchy.agent "${command[@]}"

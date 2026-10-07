@@ -1,0 +1,149 @@
+{
+  "bar": {
+    "centerAnchor": "omarchy.clock",
+    "layout": {
+      "center": [
+        {
+          "id": "omarchy.indicators"
+        },
+        {
+          "id": "omarchy.keyboard-layout"
+        },
+        {
+          "id": "omacom.elsewhen",
+          "zones": "Eastern|US/Eastern, London|Europe/London, Dubai|Asia/Dubai, Tokyo|Asia/Tokyo, Los Angeles|America/Los_Angeles"
+        },
+        {
+          "format": "dddd h:mm AP",
+          "formatAlt": "d MMMM 'W'ww yyyy",
+          "id": "omarchy.clock",
+          "verticalFormat": "HH\n—\nmm"
+        },
+        {
+          "id": "omarchy.media"
+        },
+        {
+          "id": "omarchy.system-update"
+        },
+        {
+          "id": "omarchy.weather"
+        },
+        {
+          "id": "atlas-notifications-button",
+          "source": "/home/steve/.config/omarchy/bar/modules/atlas-notifications-button.qml",
+          "type": "qml"
+        }
+      ],
+      "left": [
+        {
+          "id": "omarchy.menu"
+        },
+        {
+          "id": "omarchy.active-window"
+        },
+        {
+          "id": "omarchy.workspaces"
+        }
+      ],
+      "right": [
+        {
+          "id": "omarchy.tray"
+        },
+        {
+          "id": "com.plancher-labs.atlas-minimized"
+        },
+        {
+          "id": "rosakodu.dock"
+        },
+        {
+          "id": "stappmus.activity-monitor",
+          "processPowerEnabled": "false"
+        },
+        {
+          "id": "robzolkos.github",
+          "linkBehavior": "Web app window",
+          "refreshIntervalSec": 900,
+          "repositoryScope": "Owned and organizations",
+          "iconAlwaysUnlit": true,
+          "includeForks": true
+        },
+        {
+          "id": "omarchy.tailscale"
+        },
+        {
+          "id": "omarchy.audio"
+        },
+        {
+          "id": "omarchy.microphone"
+        },
+        {
+          "id": "com.plancher-labs.atlas-notifications"
+        },
+        {
+          "id": "omarchy.bluetooth"
+        },
+        {
+          "id": "omarchy.network"
+        },
+        {
+          "id": "atlas-protocol",
+          "type": "command",
+          "exec": "/home/steve/.local/bin/atlas-protocol status",
+          "interval": 3,
+          "tooltip": "Protocol",
+          "onClick": "omarchy menu summon protocol"
+        },
+        {
+          "id": "com.plancher-labs.atlas-glass"
+        },
+        {
+          "id": "steve.monitor"
+        },
+        {
+          "id": "omarchy.power"
+        },
+        {
+          "id": "steve.agents"
+        }
+      ]
+    },
+    "position": "bottom",
+    "transparent": false,
+    "id": "steve.bar",
+    "autohide": true,
+    "autohideEdgeDepth": 4
+  },
+  "idle": {
+    "lock": 300,
+    "screensaver": 150
+  },
+  "plugins": [
+    {
+      "id": "io.github.pablo-merino.altswitch"
+    },
+    {
+      "id": "quickapps-hud"
+    },
+    {
+      "id": "steve.notifications"
+    },
+    {
+      "id": "com.plancher-labs.atlas-hud"
+    },
+    {
+      "id": "com.plancher-labs.atlas-snap"
+    },
+    {
+      "id": "steve.lock"
+    }
+  ],
+  "version": 1,
+  "disabledPlugins": [
+    "omarchy.notifications",
+    "omarchy.lock"
+  ],
+  "cloneSourceRestores": [
+    "steve.notifications",
+    "steve.lock"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "com.plancher-labs.atlas-snap",
+  "name": "A.T.L.A.S Snap",
+  "version": "1.0.0",
+  "author": "Claude / Steve Plancher",
+  "description": "Windows-style drag-to-snap: runs the atlas-snap drag watcher and draws the snap preview while a window is dragged to a screen edge or corner.",
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Snap.qml"
+  }
+}

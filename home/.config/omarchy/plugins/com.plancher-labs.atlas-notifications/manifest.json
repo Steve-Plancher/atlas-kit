@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "com.plancher-labs.atlas-notifications",
+  "name": "A.T.L.A.S Notification Center",
+  "version": "1.0.0",
+  "author": "Hermes Agent / Steve Plancher",
+  "description": "Windows-11-style notification tab with A.T.L.A.S glass styling, clear all, selected clear, and active-toast controls.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "A.T.L.A.S Notifications",
+    "description": "Notification bell and history panel with clear all / selected controls.",
+    "category": "System",
+    "aliases": [
+      "notifications",
+      "atlas-notifications"
+    ],
+    "allowMultiple": false
+  }
+}

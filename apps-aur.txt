@@ -1,0 +1,3 @@
+# Extra apps from the AUR.
+hyprland-plugin-hyprbars
+onlyoffice-bin

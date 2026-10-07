@@ -1,0 +1,176 @@
+#!/bin/bash
+# A.T.L.A.S Protocols — switch the A.T.L.A.S color scheme. Colors only.
+#
+#   atlas-protocol                 show the active protocol
+#   atlas-protocol <name>          engage it (standby code-red clean-slate house-party)
+#   atlas-protocol next            cycle to the next one
+#   atlas-protocol list            names, one per line
+#   atlas-protocol is <name>       exit 0 when <name> is active (bar menu ✓)
+#   atlas-protocol status          Waybar-style JSON for the bar widget
+#   atlas-protocol build           (re)make wallpapers, wordmarks and cursors
+#
+# Profiles live in ~/.config/atlas-protocol/<name>.conf. A protocol changes
+# COLORS ONLY: theme colors, wallpaper art, HUD, window borders and cursor.
+# It never touches sound, notifications, glass, lock timer or apps (Steve,
+# 2026-10-07). Voice assistants should call this command.
+set -u
+
+CONF=$HOME/.config/atlas-protocol
+STATE=$HOME/.local/state/atlas-protocol
+SHARE=$HOME/.local/share/atlas-protocol
+HUD_DIR=$HOME/.config/omarchy/plugins/com.plancher-labs.atlas-hud
+ART=$HOME/.config/omarchy/backgrounds/hackerman/00-atlas.png
+THEME_COLORS=$HOME/.config/omarchy/themes/hackerman/colors.toml
+ORDER=(standby code-red clean-slate house-party)
+
+mkdir -p "$STATE" "$SHARE/backgrounds"
+log() { echo "[atlas-protocol] $*" >&2; }
+current() { local n; n=$(cat "$STATE/current" 2>/dev/null); echo "${n:-standby}"; }
+valid() { [[ -f $CONF/$1.conf ]]; }
+
+load() {  # load <name> -> profile vars in the environment
+  unset LABEL ICON DESC ACCENT ICE DEEP FG SELECTION MUTED HUE SAT BRIGHT CURSOR
+  # shellcheck disable=SC1090
+  source "$CONF/$1.conf"
+}
+
+# ── Asset build ────────────────────────────────────────────────────────────
+recolor_cursors() {  # recolor_cursors <theme-name> <hue> <sat> <bright>
+  local name=$1 hue=$2 sat=$3 bright=$4
+  local src=$HOME/.local/share/icons/Atlas-Cyan out=$HOME/.local/share/icons/$1 work
+  work=$(mktemp -d)
+  rm -rf "$out"; mkdir -p "$out/cursors"
+  sed "s/^Name=.*/Name=$name/" "$src/index.theme" > "$out/index.theme"
+  for path in "$src"/cursors/*; do
+    local c; c=$(basename "$path")
+    if [[ -L $path ]]; then ln -sf "$(readlink "$path")" "$out/cursors/$c"; continue; fi
+    rm -rf "$work/x"; mkdir -p "$work/x"
+    xcur2png -d "$work/x" -c "$work/x/cur.conf" "$path" >/dev/null 2>&1 || continue
+    for png in "$work"/x/*.png; do magick "$png" -modulate "$bright,$sat,$hue" "$png"; done
+    # xcur2png writes absolute paths into cur.conf, so xcursorgen finds the PNGs.
+    xcursorgen "$work/x/cur.conf" "$out/cursors/$c"
+  done
+  rm -rf "$work"
+}
+
+build() {
+  for name in "${ORDER[@]}"; do
+    [[ $name == standby ]] && continue
+    load "$name"
+    local bg=$SHARE/backgrounds/00-atlas-protocol-$name.png
+    log "building $name: wallpaper"
+    magick "$ART" -modulate "$BRIGHT,$SAT,$HUE" "$bg"
+    magick "$bg" -crop 830x125+420+368 +repage "$HUD_DIR/wordmark-$name.png"
+    log "building $name: cursor theme $CURSOR"
+    recolor_cursors "$CURSOR" "$HUE" "$SAT" "$BRIGHT"
+  done
+  log "build done"
+}
+
+# ── Apply steps (each one logs and carries on if it fails) ─────────────────
+apply_colors() {
+  if [[ $1 == standby ]]; then
+    cp "$CONF/standby.colors.toml" "$THEME_COLORS"
+  else
+    sed -e "s/^accent = .*/accent = \"$ACCENT\"/" \
+        -e "s/^red = .*/red = \"$ICE\"/" \
+        -e "s/^foreground = .*/foreground = \"$FG\"/" \
+        -e "s/^bright_foreground = .*/bright_foreground = \"$FG\"/" \
+        -e "s/^selection = .*/selection = \"$SELECTION\"/" \
+        -e "s/^muted = .*/muted = \"$MUTED\"/" \
+        -e "s/^hyprland_active_border = .*/hyprland_active_border = \"rgba(${ICE#\#}ee) rgba(${ACCENT#\#}ee) rgba(${DEEP#\#}ee) 45deg\"/" \
+        "$CONF/standby.colors.toml" > "$THEME_COLORS"
+  fi
+  OMARCHY_THEME_SKIP_BACKGROUND=1 omarchy theme set hackerman >/dev/null 2>&1 || log "theme re-apply failed"
+}
+
+apply_wallpaper() {
+  local bg
+  if [[ $1 == standby ]]; then bg=$(cat "$STATE/standby-bg" 2>/dev/null); [[ -f $bg ]] || bg=$ART
+  else bg=$SHARE/backgrounds/00-atlas-protocol-$1.png; fi
+  [[ -f $bg ]] || { log "missing $bg — run: atlas-protocol build"; return; }
+  ATLAS_PROTOCOL_APPLYING=1 omarchy-theme-bg-set "$bg" >/dev/null 2>&1 || log "wallpaper set failed"
+}
+
+write_state() {  # read by the HUD and by ~/.config/hypr/atlas_protocol.lua
+  echo "$1 $ACCENT $ICE $DEEP" > "$STATE/hud"
+  cat > "$STATE/state.conf" <<EOF
+name=$1
+accent=${ACCENT#\#}
+ice=${ICE#\#}
+deep=${DEEP#\#}
+cursor=$CURSOR
+EOF
+  echo "$1" > "$STATE/current"
+}
+
+apply_borders() {
+  local a=${ACCENT#\#} i=${ICE#\#} d=${DEEP#\#}
+  if [[ $1 == standby ]]; then   # exact values from looknfeel.lua
+    hyprctl eval "hl.config({ general = { col = {
+      active_border = { colors = { 'rgba(a8ecffee)', 'rgba(35c4ffee)', 'rgba(1478e6dd)' }, angle = 45 },
+      inactive_border = { colors = { 'rgba(0a2a4a99)', 'rgba(07304088)' }, angle = 45 },
+      nogroup_border_active = { colors = { 'rgba(a8ecffee)', 'rgba(35c4ffee)' }, angle = 45 },
+      nogroup_border = 'rgba(07304088)' } } })" >/dev/null 2>&1 || log "border update failed"
+    return
+  fi
+  hyprctl eval "hl.config({ general = { col = {
+    active_border = { colors = { 'rgba(${i}ee)', 'rgba(${a}ee)', 'rgba(${d}dd)' }, angle = 45 },
+    inactive_border = { colors = { 'rgba(${d}55)', 'rgba(${d}33)' }, angle = 45 },
+    nogroup_border_active = { colors = { 'rgba(${i}ee)', 'rgba(${a}ee)' }, angle = 45 },
+    nogroup_border = 'rgba(${d}33)' } } })" >/dev/null 2>&1 || log "border update failed"
+}
+
+apply_cursor() {
+  [[ -d $HOME/.local/share/icons/$CURSOR ]] || { log "missing cursor theme $CURSOR — run: atlas-protocol build"; return; }
+  # Hyprland caches cursor images per theme name; hop away first so the new one loads.
+  hyprctl setcursor Adwaita 24 >/dev/null 2>&1
+  hyprctl setcursor "$CURSOR" 24 >/dev/null 2>&1
+  hyprctl eval "hl.env('XCURSOR_THEME', '$CURSOR')" >/dev/null 2>&1
+  gsettings set org.gnome.desktop.interface cursor-theme "$CURSOR" 2>/dev/null
+  sed -i "s/^gtk-cursor-theme-name=.*/gtk-cursor-theme-name=$CURSOR/" "$HOME/.config/gtk-3.0/settings.ini" 2>/dev/null
+  sed -i "s/^Inherits=.*/Inherits=$CURSOR/" "$HOME/.icons/default/index.theme" 2>/dev/null
+}
+
+engage() {
+  local name=$1 from
+  from=$(current)
+  exec 9>"$STATE/lock"; flock 9
+  # Leaving Standby: remember its wallpaper so coming back restores it.
+  if [[ $from == standby && $name != standby ]]; then
+    local bg; bg=$(readlink -f "$HOME/.local/state/omarchy/current/background")
+    [[ $bg == "$SHARE"/backgrounds/* ]] || echo "$bg" > "$STATE/standby-bg"
+  fi
+  load "$name"
+  write_state "$name"      # HUD + borders + cursor follow this file
+  apply_borders "$name"
+  apply_cursor
+  apply_wallpaper "$name"
+  apply_colors "$name"     # slowest step last: the rest is already visible
+  log "engaged $name"
+}
+
+case "${1:-}" in
+  ""|show) current ;;
+  list) printf '%s\n' "${ORDER[@]}" ;;
+  is) [[ $(current) == "${2:-}" ]] ;;
+  status)
+    load "$(current)"
+    printf '{"text":"%s %s","tooltip":"Protocol: %s — %s\\nClick to switch","class":"%s"}\n' \
+      "$ICON" "$LABEL" "$LABEL" "${DESC:-}" "$(current)" ;;
+  build) build ;;
+  next)
+    cur=$(current); nxt=${ORDER[0]}
+    for i in "${!ORDER[@]}"; do
+      [[ ${ORDER[i]} == "$cur" ]] && nxt=${ORDER[$(((i + 1) % ${#ORDER[@]}))]} && break
+    done
+    engage "$nxt" ;;
+  *)
+    # Accept spoken-style names too: "Code Red", "house party", "clean_slate".
+    want=$(echo "$*" | tr '[:upper:]_ ' '[:lower:]--' | sed -e 's/^protocol-//' -e 's/-protocol$//')
+    if valid "$want"; then engage "$want"
+    else
+      echo "usage: atlas-protocol [show|next|list|status|build|is <name>|${ORDER[*]// /|}]" >&2
+      exit 1
+    fi ;;
+esac

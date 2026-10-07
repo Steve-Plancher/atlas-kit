@@ -1,0 +1,822 @@
+// A.T.L.A.S Live HUD
+//
+// An animated JARVIS-style layer drawn over the A.T.L.A.S wallpaper. It sits on
+// the Bottom layer (above the wallpaper, below every window), takes no input so
+// desktop clicks still reach the background, and is registered to the
+// artwork's own pixel grid: everything below is placed in 00-atlas.png's
+// 1672x941 coordinates and scaled exactly the way the wallpaper is cropped, so
+// the rings, pad and traces land on the painted ones at any resolution.
+//
+// Nothing animates unless the Atlas wallpaper is the current background, and
+// the whole scene freezes while the user is idle, a window is fullscreen, the
+// power profile is low-power, or ~/.local/state/atlas-hud/paused exists
+// (toggle.sh flips it).
+
+import QtQuick
+import QtQuick.Shapes
+import QtQuick.Particles
+import Quickshell
+import Quickshell.Io
+import Quickshell.Wayland
+import Quickshell.Hyprland
+
+Item {
+  id: root
+
+  property var shell: null
+  property var manifest: null
+
+  readonly property string home: Quickshell.env("HOME")
+  readonly property string pluginDir: home + "/.config/omarchy/plugins/com.plancher-labs.atlas-hud"
+
+  // Artwork registration, measured from the image itself.
+  readonly property string artName: "00-atlas.png"
+  readonly property real artW: 1672
+  readonly property real artH: 941
+  readonly property real coreX: 836
+  readonly property real coreY: 440
+  readonly property real padX: 836
+  readonly property real padY: 790
+  readonly property real floorY: 735
+
+  readonly property color cyan: "#35c4ff"
+  readonly property color ice: "#a8ecff"
+  readonly property color deep: "#1478e6"
+  readonly property string hudFont: "JetBrainsMono Nerd Font"
+
+  property bool artActive: false
+  property bool pausedByUser: false
+  property bool powerSaver: false
+  readonly property bool userIdle: idleMonitor.isIdle
+  readonly property bool animate: artActive && !pausedByUser && !powerSaver && !userIdle
+
+  // Boot sequence progress, 0 -> 1 each time the HUD comes up.
+  property real boot: 0
+
+  // Telemetry
+  property real cpu: 0
+  property real mem: 0
+  property real temp: 0
+  property int battery: -1
+  property string batteryState: ""
+  property real netDown: 0
+  property real netUp: 0
+  property real uptimeSec: 0
+  property var prevCpu: null
+  property var prevNet: null
+
+  function alpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
+  function stage(from, to) { return Math.max(0, Math.min(1, (boot - from) / (to - from))) }
+
+  function formatRate(bps) {
+    if (bps >= 1048576) return (bps / 1048576).toFixed(1) + " MB/s"
+    if (bps >= 1024) return Math.round(bps / 1024) + " KB/s"
+    return Math.round(bps) + " B/s"
+  }
+
+  function formatUptime(s) {
+    var d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60)
+    return (d > 0 ? d + "D " : "") + h + "H " + (m < 10 ? "0" : "") + m + "M"
+  }
+
+  function ingest(line) {
+    var f = String(line).trim().split(" ")
+    if (f.length < 13) return
+    var total = Number(f[0]), idle = Number(f[1])
+    if (prevCpu && total > prevCpu.total)
+      cpu = Math.max(0, Math.min(1, 1 - (idle - prevCpu.idle) / (total - prevCpu.total)))
+    prevCpu = { total: total, idle: idle }
+    if (Number(f[2]) > 0) mem = 1 - Number(f[3]) / Number(f[2])
+    temp = Number(f[4]) / 1000
+    battery = Number(f[5])
+    batteryState = String(f[6]).replace(/_/g, " ").toUpperCase()
+    var now = Date.now(), rx = Number(f[7]), tx = Number(f[8])
+    if (prevNet) {
+      var secs = (now - prevNet.t) / 1000
+      if (secs > 0) {
+        netDown = Math.max(0, (rx - prevNet.rx) / secs)
+        netUp = Math.max(0, (tx - prevNet.tx) / secs)
+      }
+    }
+    prevNet = { rx: rx, tx: tx, t: now }
+    uptimeSec = Number(f[9])
+    powerSaver = f[10] === "low-power" || f[10] === "quiet"
+    pausedByUser = f[11] === "1"
+    artActive = f.slice(12).join(" ") === artName
+  }
+
+  onArtActiveChanged: if (artActive) { boot = 0; bootAnim.restart() }
+
+  NumberAnimation {
+    id: bootAnim
+    target: root
+    property: "boot"
+    from: 0
+    to: 1
+    duration: 2600
+    easing.type: Easing.OutQuad
+  }
+
+  Process {
+    id: statsProc
+    command: [root.pluginDir + "/stats.sh"]
+    stdout: SplitParser { onRead: function(line) { root.ingest(line) } }
+  }
+
+  Timer {
+    interval: 2000
+    repeat: true
+    running: true
+    triggeredOnStart: true
+    onTriggered: if (!statsProc.running) statsProc.running = true
+  }
+
+  IdleMonitor {
+    id: idleMonitor
+    timeout: 90
+    respectInhibitors: false
+  }
+
+  SystemClock {
+    id: clock
+    precision: SystemClock.Seconds
+  }
+
+  // Typewriter status line under the subtitle.
+  readonly property var messages: [
+    "ALL SYSTEMS NOMINAL",
+    "CPU LOAD " + Math.round(cpu * 100) + "%  ·  MEMORY " + Math.round(mem * 100) + "%",
+    "CORE TEMPERATURE " + Math.round(temp) + "°C  ·  WITHIN LIMITS",
+    battery >= 0 ? "POWER CELL " + battery + "%  ·  " + batteryState : "EXTERNAL POWER",
+    "NETWORK LINK ACTIVE  ·  ↓ " + formatRate(netDown),
+    "WELCOME BACK, STEVE"
+  ]
+  property int messageIndex: 0
+  property int typed: 0
+  property int holdTicks: 0
+  property bool erasing: false
+  readonly property string currentMessage: messages[messageIndex] || ""
+
+  Timer {
+    interval: 45
+    repeat: true
+    running: root.animate
+    onTriggered: {
+      var msg = root.currentMessage
+      if (root.erasing) {
+        root.typed = Math.max(0, root.typed - 3)
+        if (root.typed === 0) {
+          root.erasing = false
+          root.messageIndex = (root.messageIndex + 1) % root.messages.length
+        }
+      } else if (root.typed < msg.length) {
+        root.typed++
+      } else if (++root.holdTicks > 90) {
+        root.holdTicks = 0
+        root.erasing = true
+      }
+    }
+  }
+
+  Variants {
+    model: Quickshell.screens
+
+    PanelWindow {
+      id: panel
+      required property var modelData
+
+      screen: modelData
+      visible: root.artActive
+      anchors { top: true; bottom: true; left: true; right: true }
+      color: "transparent"
+      exclusionMode: ExclusionMode.Ignore
+      mask: Region {}
+      WlrLayershell.namespace: "atlas-hud"
+      WlrLayershell.layer: WlrLayer.Bottom
+      WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+
+      readonly property var hyprMonitor: Hyprland.monitorFor(modelData)
+      readonly property bool fullscreenHere: hyprMonitor && hyprMonitor.activeWorkspace
+        ? hyprMonitor.activeWorkspace.hasFullscreen : false
+      readonly property bool live: root.animate && !fullscreenHere
+
+      // Same cover-fit as the wallpaper's PreserveAspectCrop.
+      readonly property real fit: Math.max(width / root.artW, height / root.artH)
+
+      Item {
+        id: art
+        width: root.artW
+        height: root.artH
+        x: (panel.width - root.artW * panel.fit) / 2
+        y: (panel.height - root.artH * panel.fit) / 2
+        transformOrigin: Item.TopLeft
+        scale: panel.fit
+
+        // ── Core glow ───────────────────────────────────────────────
+        Item {
+          x: root.coreX - 360; y: root.coreY - 360
+          width: 720; height: 720
+          opacity: root.stage(0.0, 0.4)
+
+          Shape {
+            id: coreGlow
+            anchors.fill: parent
+            opacity: 0.4
+            preferredRendererType: Shape.CurveRenderer
+            ShapePath {
+              strokeColor: "transparent"
+              fillGradient: RadialGradient {
+                centerX: 360; centerY: 360; centerRadius: 360
+                focalX: 360; focalY: 360
+                GradientStop { position: 0.0; color: root.alpha(root.cyan, 0.20) }
+                GradientStop { position: 0.5; color: root.alpha(root.deep, 0.07) }
+                GradientStop { position: 1.0; color: "transparent" }
+              }
+              PathAngleArc { centerX: 360; centerY: 360; radiusX: 360; radiusY: 360; startAngle: 0; sweepAngle: 360 }
+            }
+            SequentialAnimation on opacity {
+              loops: Animation.Infinite
+              paused: !panel.live
+              NumberAnimation { to: 0.85; duration: 2800; easing.type: Easing.InOutSine }
+              NumberAnimation { to: 0.4; duration: 2800; easing.type: Easing.InOutSine }
+            }
+          }
+        }
+
+        // ── Radar sweep ─────────────────────────────────────────────
+        Item {
+          x: root.coreX - 222; y: root.coreY - 222
+          width: 444; height: 444
+          opacity: root.stage(0.25, 0.55)
+
+          Item {
+            id: radar
+            anchors.fill: parent
+            Shape {
+              anchors.fill: parent
+              preferredRendererType: Shape.CurveRenderer
+              ShapePath {
+                strokeColor: "transparent"
+                fillGradient: ConicalGradient {
+                  centerX: 222; centerY: 222; angle: 0
+                  GradientStop { position: 0.0; color: root.alpha(root.cyan, 0.24) }
+                  GradientStop { position: 0.14; color: root.alpha(root.cyan, 0.0) }
+                  GradientStop { position: 1.0; color: root.alpha(root.cyan, 0.0) }
+                }
+                PathAngleArc { centerX: 222; centerY: 222; radiusX: 222; radiusY: 222; startAngle: 0; sweepAngle: 360 }
+              }
+            }
+            Rectangle {
+              x: 222; y: 221
+              width: 222; height: 2
+              gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0.0; color: root.alpha(root.ice, 0.0) }
+                GradientStop { position: 1.0; color: root.alpha(root.ice, 0.7) }
+              }
+            }
+            NumberAnimation on rotation {
+              from: 0; to: 360; duration: 6500
+              loops: Animation.Infinite
+              paused: !panel.live
+            }
+          }
+        }
+
+        // ── Ring system ─────────────────────────────────────────────
+        Item {
+          anchors.fill: parent
+          opacity: root.stage(0.05, 0.45)
+          scale: 0.9 + 0.1 * root.stage(0.05, 0.5)
+          transformOrigin: Item.TopLeft
+
+          // Heavy outer arcs, slow clockwise.
+          Ring {
+            radius: 276; lineWidth: 3.5; period: 48000
+            strokeColor: root.alpha(root.cyan, 0.8)
+            segments: [[200, 52], [292, 38], [20, 52], [112, 38]]
+          }
+          // Fine tick ring, counter-clockwise.
+          Ring {
+            radius: 238; lineWidth: 2; period: -70000
+            strokeColor: root.alpha(root.ice, 0.35)
+            segments: root.ticks(36, 4)
+          }
+          // Outer graduation ring, very slow.
+          Ring {
+            radius: 304; lineWidth: 7; period: 140000
+            strokeColor: root.alpha(root.deep, 0.45)
+            segments: root.ticks(72, 1.1)
+          }
+          // Thin halo.
+          Ring {
+            radius: 322; lineWidth: 1; period: 0
+            strokeColor: root.alpha(root.cyan, 0.22)
+            segments: [[0, 360]]
+          }
+          // Fast scanner pair.
+          Ring {
+            radius: 222; lineWidth: 3; period: 7000
+            strokeColor: root.alpha(root.ice, 0.95)
+            segments: [[0, 16], [180, 16]]
+          }
+        }
+
+        // ── Holo-pad and beam ───────────────────────────────────────
+        Item {
+          anchors.fill: parent
+          opacity: root.stage(0.1, 0.45)
+
+          // Beam from pad up to the ring.
+          Rectangle {
+            id: beam
+            x: root.padX - 1.5; y: 700
+            width: 3; height: root.padY - 700
+            opacity: 0.35
+            gradient: Gradient {
+              GradientStop { position: 0.0; color: root.alpha(root.ice, 0.0) }
+              GradientStop { position: 1.0; color: root.alpha(root.ice, 0.9) }
+            }
+            SequentialAnimation on opacity {
+              loops: Animation.Infinite
+              paused: !panel.live
+              NumberAnimation { to: 0.9; duration: 1400; easing.type: Easing.InOutSine }
+              NumberAnimation { to: 0.35; duration: 1400; easing.type: Easing.InOutSine }
+            }
+          }
+
+          // Energy packet riding the beam.
+          Glint {
+            id: beamGlint
+            x: root.padX; y: root.padY
+            SequentialAnimation {
+              running: true
+              loops: Animation.Infinite
+              paused: !panel.live
+              PropertyAction { target: beamGlint; property: "y"; value: root.padY }
+              ParallelAnimation {
+                NumberAnimation { target: beamGlint; property: "y"; to: 698; duration: 1500; easing.type: Easing.InQuad }
+                SequentialAnimation {
+                  NumberAnimation { target: beamGlint; property: "opacity"; from: 0; to: 1; duration: 250 }
+                  PauseAnimation { duration: 950 }
+                  NumberAnimation { target: beamGlint; property: "opacity"; to: 0; duration: 300 }
+                }
+              }
+              PauseAnimation { duration: 900 }
+            }
+          }
+
+          // Core of the pad.
+          Item {
+            x: root.padX - 70; y: root.padY - 70
+            width: 140; height: 140
+            transform: Scale { origin.x: 70; origin.y: 70; yScale: 0.2 }
+            Shape {
+              id: padCore
+              anchors.fill: parent
+              opacity: 0.6
+              preferredRendererType: Shape.CurveRenderer
+              ShapePath {
+                strokeColor: "transparent"
+                fillGradient: RadialGradient {
+                  centerX: 70; centerY: 70; centerRadius: 70; focalX: 70; focalY: 70
+                  GradientStop { position: 0.0; color: root.alpha(root.ice, 0.9) }
+                  GradientStop { position: 0.35; color: root.alpha(root.cyan, 0.45) }
+                  GradientStop { position: 1.0; color: "transparent" }
+                }
+                PathAngleArc { centerX: 70; centerY: 70; radiusX: 70; radiusY: 70; startAngle: 0; sweepAngle: 360 }
+              }
+              SequentialAnimation on opacity {
+                loops: Animation.Infinite
+                paused: !panel.live
+                NumberAnimation { to: 1.0; duration: 1400; easing.type: Easing.InOutSine }
+                NumberAnimation { to: 0.5; duration: 1400; easing.type: Easing.InOutSine }
+              }
+            }
+          }
+
+          // Expanding ripples, staggered on a shared 5.4s period.
+          Repeater {
+            model: 3
+            Item {
+              id: ripple
+              required property int index
+              x: root.padX - 240; y: root.padY - 30
+              width: 480; height: 60
+              scale: 0.15
+              opacity: 0
+              Shape {
+                anchors.fill: parent
+                preferredRendererType: Shape.CurveRenderer
+                ShapePath {
+                  fillColor: "transparent"
+                  strokeColor: root.ice
+                  strokeWidth: 2.5
+                  PathAngleArc { centerX: 240; centerY: 30; radiusX: 236; radiusY: 26; startAngle: 0; sweepAngle: 360 }
+                }
+              }
+              SequentialAnimation {
+                running: true
+                loops: Animation.Infinite
+                paused: !panel.live
+                PauseAnimation { duration: ripple.index * 1200 }
+                ParallelAnimation {
+                  NumberAnimation { target: ripple; property: "scale"; from: 0.15; to: 1.3; duration: 3000; easing.type: Easing.OutCubic }
+                  NumberAnimation { target: ripple; property: "opacity"; from: 0.9; to: 0; duration: 3000; easing.type: Easing.InQuad }
+                }
+                PauseAnimation { duration: (2 - ripple.index) * 1200 }
+              }
+            }
+          }
+        }
+
+        // ── Circuit and floor pulses ────────────────────────────────
+        Item {
+          anchors.fill: parent
+          opacity: root.stage(0.4, 0.7)
+
+          Repeater {
+            model: [
+              // [x1, y1, x2, y2, travelMs, delayMs, periodMs]
+              [163, 81, 496, 78, 1600, 0, 5200],
+              [1509, 81, 1176, 78, 1600, 2600, 5200],
+              [92, 158, 92, 470, 1900, 1200, 6100],
+              [1580, 158, 1580, 470, 1900, 4200, 6100],
+              [268, 416, 380, 416, 700, 600, 3900],
+              [1403, 416, 1292, 416, 700, 2500, 3900],
+              [100, 538, 226, 538, 800, 1800, 4700],
+              [1572, 538, 1446, 538, 800, 300, 4700],
+              [0, root.floorY, 560, root.floorY, 2300, 0, 4400],
+              [1672, root.floorY, 1112, root.floorY, 2300, 900, 4400],
+              [0, root.floorY, 560, root.floorY, 2300, 2200, 4400],
+              [1672, root.floorY, 1112, root.floorY, 2300, 3300, 4400]
+            ]
+            Glint {
+              id: pulse
+              required property var modelData
+              property real t: 0
+              x: modelData[0] + (modelData[2] - modelData[0]) * t
+              y: modelData[1] + (modelData[3] - modelData[1]) * t
+              opacity: 0
+              trail: true
+              trailAngle: Math.atan2(modelData[3] - modelData[1], modelData[2] - modelData[0]) * 180 / Math.PI
+
+              SequentialAnimation {
+                running: true
+                loops: Animation.Infinite
+                paused: !panel.live
+                PauseAnimation { duration: pulse.modelData[5] }
+                ParallelAnimation {
+                  NumberAnimation { target: pulse; property: "t"; from: 0; to: 1; duration: pulse.modelData[4]; easing.type: Easing.InOutQuad }
+                  SequentialAnimation {
+                    NumberAnimation { target: pulse; property: "opacity"; from: 0; to: 1; duration: pulse.modelData[4] * 0.15 }
+                    PauseAnimation { duration: pulse.modelData[4] * 0.65 }
+                    NumberAnimation { target: pulse; property: "opacity"; to: 0; duration: pulse.modelData[4] * 0.2 }
+                  }
+                }
+                PauseAnimation { duration: Math.max(0, pulse.modelData[6] - pulse.modelData[4] - pulse.modelData[5]) }
+              }
+            }
+          }
+
+          // Node beacons at trace junctions.
+          Repeater {
+            model: [[45, 81], [45, 148], [1626, 81], [1626, 148], [230, 538], [1441, 538],
+                    [335, 278], [1338, 278], [496, 77], [1176, 77], [268, 416], [1403, 416]]
+            Rectangle {
+              id: node
+              required property var modelData
+              required property int index
+              x: modelData[0] - 11; y: modelData[1] - 11
+              width: 22; height: 22; radius: 11
+              color: root.alpha(root.cyan, 0.12)
+              border.color: root.ice
+              border.width: 1.5
+              opacity: 0
+              SequentialAnimation on opacity {
+                loops: Animation.Infinite
+                paused: !panel.live
+                PauseAnimation { duration: node.index * 530 % 3200 }
+                NumberAnimation { to: 0.9; duration: 350 }
+                NumberAnimation { to: 0; duration: 900; easing.type: Easing.OutQuad }
+                PauseAnimation { duration: 3200 - 1250 - node.index * 530 % 3200 > 0 ? 3200 - 1250 - node.index * 530 % 3200 : 400 }
+              }
+            }
+          }
+
+          // Light sweeps across the chevron groups.
+          Repeater {
+            model: [[334, 32, 78, 24, 0], [1258, 32, 78, 24, 1800], [218, 438, 80, 24, 900], [1374, 438, 80, 24, 2700]]
+            Item {
+              id: chevron
+              required property var modelData
+              x: modelData[0]; y: modelData[1]
+              width: modelData[2]; height: modelData[3]
+              clip: true
+              Rectangle {
+                id: shine
+                x: -24; y: 0
+                width: 20; height: chevron.height
+                gradient: Gradient {
+                  orientation: Gradient.Horizontal
+                  GradientStop { position: 0.0; color: "transparent" }
+                  GradientStop { position: 0.5; color: root.alpha(root.ice, 0.75) }
+                  GradientStop { position: 1.0; color: "transparent" }
+                }
+              }
+              SequentialAnimation {
+                running: true
+                loops: Animation.Infinite
+                paused: !panel.live
+                PauseAnimation { duration: chevron.modelData[4] }
+                NumberAnimation { target: shine; property: "x"; from: -24; to: chevron.width + 4; duration: 800; easing.type: Easing.InOutQuad }
+                PauseAnimation { duration: 3600 - chevron.modelData[4] }
+              }
+            }
+          }
+        }
+
+        // ── Drifting particles ──────────────────────────────────────
+        ParticleSystem {
+          id: particles
+          anchors.fill: parent
+          paused: !panel.live
+          opacity: root.stage(0.3, 0.8)
+
+          ImageParticle {
+            source: "qrc:///particleresources/glowdot.png"
+            color: root.alpha(root.cyan, 0.75)
+            colorVariation: 0.12
+            alpha: 0.6
+          }
+          Emitter {
+            x: 260; y: root.floorY
+            width: 1152; height: 150
+            emitRate: 5
+            lifeSpan: 7000; lifeSpanVariation: 2500
+            size: 9; sizeVariation: 5; endSize: 2
+            velocity: AngleDirection { angle: 270; angleVariation: 12; magnitude: 20; magnitudeVariation: 10 }
+          }
+          Emitter {
+            x: root.padX - 110; y: root.padY - 10
+            width: 220; height: 20
+            emitRate: 3
+            lifeSpan: 3500; lifeSpanVariation: 800
+            size: 7; sizeVariation: 3; endSize: 1
+            velocity: AngleDirection { angle: 270; angleVariation: 6; magnitude: 55; magnitudeVariation: 15 }
+          }
+        }
+
+        // ── Scanline ────────────────────────────────────────────────
+        Item {
+          id: scan
+          x: 0; y: -80
+          width: root.artW; height: 80
+          opacity: root.stage(0.6, 0.9)
+          Rectangle {
+            anchors.fill: parent
+            gradient: Gradient {
+              GradientStop { position: 0.0; color: "transparent" }
+              GradientStop { position: 0.97; color: root.alpha(root.cyan, 0.06) }
+              GradientStop { position: 1.0; color: root.alpha(root.ice, 0.22) }
+            }
+          }
+          SequentialAnimation {
+            running: true
+            loops: Animation.Infinite
+            paused: !panel.live
+            NumberAnimation { target: scan; property: "y"; from: -80; to: root.artH; duration: 7500; easing.type: Easing.InOutSine }
+            PauseAnimation { duration: 5000 }
+          }
+        }
+
+        // ── Title shimmer ───────────────────────────────────────────
+        Item {
+          x: 420; y: 368
+          width: 830; height: 125
+          clip: true
+          Rectangle {
+            id: shimmer
+            x: -160; y: -70
+            width: 70; height: 265
+            rotation: 18
+            gradient: Gradient {
+              orientation: Gradient.Horizontal
+              GradientStop { position: 0.0; color: "transparent" }
+              GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, 0.16) }
+              GradientStop { position: 1.0; color: "transparent" }
+            }
+          }
+          SequentialAnimation {
+            running: true
+            loops: Animation.Infinite
+            paused: !panel.live
+            PauseAnimation { duration: 3000 }
+            NumberAnimation { target: shimmer; property: "x"; from: -160; to: 920; duration: 1700; easing.type: Easing.InOutQuad }
+            PauseAnimation { duration: 5500 }
+          }
+        }
+
+        // ── Status line ─────────────────────────────────────────────
+        Row {
+          anchors.horizontalCenter: parent.horizontalCenter
+          y: 566
+          spacing: 6
+          opacity: root.stage(0.75, 1.0)
+          HudText {
+            text: "›  " + root.currentMessage.substring(0, root.typed)
+            color: root.cyan
+            size: 17
+            spacing: 3
+          }
+          HudText {
+            id: cursorGlyph
+            text: "▍"
+            color: root.ice
+            size: 17
+            SequentialAnimation on opacity {
+              loops: Animation.Infinite
+              paused: !panel.live
+              NumberAnimation { to: 0; duration: 450 }
+              NumberAnimation { to: 1; duration: 450 }
+            }
+          }
+        }
+
+        // ── Telemetry: left ─────────────────────────────────────────
+        Column {
+          x: 70; y: 588
+          spacing: 12
+          opacity: root.stage(0.55, 0.9)
+
+          HudText { text: "▌SYSTEM TELEMETRY"; color: root.ice; size: 15; spacing: 3; bold: true }
+          Gauge { label: "CPU "; value: root.cpu; readout: Math.round(root.cpu * 100) + "%" }
+          Gauge { label: "MEM "; value: root.mem; readout: Math.round(root.mem * 100) + "%" }
+          Gauge {
+            label: "TEMP"
+            value: Math.max(0, Math.min(1, (root.temp - 30) / 70))
+            readout: Math.round(root.temp) + "°C"
+            hot: root.temp >= 85
+          }
+        }
+
+        // ── Telemetry: right ────────────────────────────────────────
+        Column {
+          x: 1602 - width; y: 572
+          spacing: 6
+          opacity: root.stage(0.55, 0.9)
+
+          HudText {
+            x: parent.width - width
+            text: Qt.formatTime(clock.date, "HH:mm:ss")
+            color: root.ice
+            size: 46
+            spacing: 4
+          }
+          HudText {
+            x: parent.width - width
+            text: Qt.formatDate(clock.date, "dddd  d MMM yyyy").toUpperCase()
+            color: root.cyan
+            size: 14
+            spacing: 3
+          }
+          Item { width: 1; height: 6 }
+          HudText {
+            x: parent.width - width
+            text: root.battery >= 0 ? "PWR  " + root.battery + "%  " + root.batteryState : "PWR  AC"
+            color: root.alpha(root.ice, 0.85); size: 14; spacing: 2
+          }
+          HudText {
+            x: parent.width - width
+            text: "NET  ↓ " + root.formatRate(root.netDown) + "   ↑ " + root.formatRate(root.netUp)
+            color: root.alpha(root.ice, 0.85); size: 14; spacing: 2
+          }
+          HudText {
+            x: parent.width - width
+            text: "UPTIME  " + root.formatUptime(root.uptimeSec)
+            color: root.alpha(root.ice, 0.85); size: 14; spacing: 2
+          }
+        }
+      }
+    }
+  }
+
+  // Evenly spaced tick segments for a ring: count ticks, each sweep degrees.
+  function ticks(count, sweep) {
+    var out = []
+    for (var i = 0; i < count; i++) out.push([i * 360 / count, sweep])
+    return out
+  }
+
+  component Ring: Item {
+    id: ring
+    property real radius: 100
+    property real lineWidth: 2
+    property color strokeColor: root.cyan
+    property var segments: [[0, 360]]
+    // Milliseconds per revolution; negative spins counter-clockwise, 0 is still.
+    property int period: 20000
+
+    width: (radius + lineWidth) * 2
+    height: width
+    x: root.coreX - width / 2
+    y: root.coreY - height / 2
+
+    Repeater {
+      model: ring.segments
+      Shape {
+        required property var modelData
+        anchors.fill: parent
+        preferredRendererType: Shape.CurveRenderer
+        ShapePath {
+          fillColor: "transparent"
+          strokeColor: ring.strokeColor
+          strokeWidth: ring.lineWidth
+          capStyle: ShapePath.FlatCap
+          PathAngleArc {
+            centerX: ring.width / 2; centerY: ring.height / 2
+            radiusX: ring.radius; radiusY: ring.radius
+            startAngle: modelData[0]; sweepAngle: modelData[1]
+          }
+        }
+      }
+    }
+
+    NumberAnimation on rotation {
+      from: 0
+      to: ring.period < 0 ? -360 : 360
+      duration: Math.max(1, Math.abs(ring.period))
+      loops: Animation.Infinite
+      running: ring.period !== 0
+      paused: running && !root.animate
+    }
+  }
+
+  // A bright point with a soft halo, optionally dragging a short trail.
+  component Glint: Item {
+    id: glint
+    property bool trail: false
+    property real trailAngle: 0
+    width: 0; height: 0
+
+    Rectangle {
+      visible: glint.trail
+      x: -70; y: -1
+      width: 70; height: 2
+      transformOrigin: Item.Right
+      rotation: glint.trailAngle
+      gradient: Gradient {
+        orientation: Gradient.Horizontal
+        GradientStop { position: 0.0; color: "transparent" }
+        GradientStop { position: 1.0; color: root.alpha(root.ice, 0.8) }
+      }
+    }
+    Rectangle {
+      x: -9; y: -9; width: 18; height: 18; radius: 9
+      color: root.alpha(root.cyan, 0.28)
+    }
+    Rectangle {
+      x: -3; y: -3; width: 6; height: 6; radius: 3
+      color: "#ffffff"
+    }
+  }
+
+  component HudText: Text {
+    property real size: 14
+    property real spacing: 1
+    property bool bold: false
+    font.family: root.hudFont
+    font.pixelSize: size
+    font.letterSpacing: spacing
+    font.bold: bold
+    renderType: Text.QtRendering
+  }
+
+  component Gauge: Row {
+    id: gauge
+    property string label: ""
+    property real value: 0
+    property string readout: ""
+    property bool hot: false
+    spacing: 12
+
+    HudText { text: gauge.label; color: root.alpha(root.ice, 0.85); size: 14; spacing: 2; anchors.verticalCenter: parent.verticalCenter }
+    Item {
+      width: 200; height: 8
+      anchors.verticalCenter: parent.verticalCenter
+      Rectangle { anchors.fill: parent; color: root.alpha(root.cyan, 0.12); border.color: root.alpha(root.cyan, 0.35); border.width: 1 }
+      Rectangle {
+        x: 1; y: 1
+        height: parent.height - 2
+        width: Math.max(0, (parent.width - 2) * gauge.value)
+        color: gauge.hot ? "#ff6b6b" : root.cyan
+        Behavior on width { NumberAnimation { duration: 900; easing.type: Easing.OutCubic } }
+      }
+      Repeater {
+        model: 9
+        Rectangle { required property int index; x: (index + 1) * 20; y: 0; width: 1; height: 8; color: root.alpha("#000000", 0.45) }
+      }
+    }
+    HudText { text: gauge.readout; color: root.ice; size: 14; spacing: 1; anchors.verticalCenter: parent.verticalCenter }
+  }
+}

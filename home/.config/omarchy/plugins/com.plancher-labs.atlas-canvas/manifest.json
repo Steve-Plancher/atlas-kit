@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "com.plancher-labs.atlas-canvas",
+  "name": "A.T.L.A.S Canvas",
+  "version": "0.1.0",
+  "author": "Claude / Steve Plancher",
+  "description": "Reactive shader desktop: a computed circuit field and parametric core that respond to keystrokes, pointer and window events. Replaces the static wallpaper and the Live HUD overlay.",
+  "kinds": ["overlay"],
+  "keepLoaded": true,
+  "entryPoints": { "overlay": "Overlay.qml" }
+}

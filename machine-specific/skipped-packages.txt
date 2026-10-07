@@ -1,0 +1,16 @@
+# Left out on purpose: hardware/boot packages specific to the old laptop
+efibootmgr
+fprintd
+fwupd
+intel-ucode
+libfprint-2-tod1-broadcom
+linux
+mkinitcpio
+nvme-cli
+omarchy-dev
+omarchy-keyring
+omarchy-settings-dev
+powertop
+smartmontools
+sudo
+usbutils

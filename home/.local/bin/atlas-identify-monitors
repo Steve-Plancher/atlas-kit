@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+import gi
+
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib
+
+DURATION_MS = 5500
+
+CSS = b'''
+.identify-window {
+  background: rgba(0, 0, 0, 0.50);
+}
+.identify-card {
+  background: rgba(0, 188, 255, 0.88);
+  border: 8px solid rgba(255, 255, 255, 0.95);
+  border-radius: 28px;
+  padding: 48px 72px;
+  box-shadow: 0 0 40px rgba(0, 188, 255, 0.95);
+}
+.identify-number {
+  color: #001018;
+  font-family: Inter, Sans, sans-serif;
+  font-size: 180px;
+  font-weight: 900;
+}
+.identify-name {
+  color: #001018;
+  font-family: Inter, Sans, sans-serif;
+  font-size: 30px;
+  font-weight: 800;
+}
+'''
+
+def safe_call(obj, method):
+    fn = getattr(obj, method, None)
+    if not fn:
+        return ''
+    try:
+        return fn() or ''
+    except Exception:
+        return ''
+
+def monitor_name(monitor):
+    connector = safe_call(monitor, 'get_connector')
+    manufacturer = safe_call(monitor, 'get_manufacturer')
+    model = safe_call(monitor, 'get_model')
+    label = ' '.join(x for x in [connector, manufacturer, model] if x).strip()
+    return label or 'Monitor'
+
+def main():
+    display = Gdk.Display.get_default()
+    if display is None:
+        raise SystemExit('No graphical display found')
+
+    provider = Gtk.CssProvider()
+    provider.load_from_data(CSS)
+    Gtk.StyleContext.add_provider_for_screen(
+        Gdk.Screen.get_default(),
+        provider,
+        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+    )
+
+    monitors = []
+    for i in range(display.get_n_monitors()):
+        mon = display.get_monitor(i)
+        geo = mon.get_geometry()
+        monitors.append((geo.x, geo.y, i, mon))
+    monitors.sort(key=lambda item: (item[0], item[1]))
+
+    for number, (_, _, idx, mon) in enumerate(monitors, start=1):
+        win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
+        win.set_title(f'Monitor {number}')
+        win.set_decorated(False)
+        win.set_keep_above(True)
+        win.set_skip_taskbar_hint(True)
+        win.set_skip_pager_hint(True)
+        win.set_app_paintable(True)
+        win.set_accept_focus(False)
+        win.set_type_hint(Gdk.WindowTypeHint.NOTIFICATION)
+        win.get_style_context().add_class('identify-window')
+
+        outer = Gtk.EventBox()
+        outer.get_style_context().add_class('identify-window')
+        grid = Gtk.Grid()
+        grid.set_halign(Gtk.Align.CENTER)
+        grid.set_valign(Gtk.Align.CENTER)
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card.get_style_context().add_class('identify-card')
+        card.set_halign(Gtk.Align.CENTER)
+        card.set_valign(Gtk.Align.CENTER)
+
+        num = Gtk.Label(label=str(number))
+        num.get_style_context().add_class('identify-number')
+        name = Gtk.Label(label=monitor_name(mon))
+        name.get_style_context().add_class('identify-name')
+
+        card.pack_start(num, False, False, 0)
+        card.pack_start(name, False, False, 0)
+        grid.attach(card, 0, 0, 1, 1)
+        outer.add(grid)
+        win.add(outer)
+        win.show_all()
+        win.fullscreen_on_monitor(Gdk.Screen.get_default(), idx)
+
+    GLib.timeout_add(DURATION_MS, Gtk.main_quit)
+    Gtk.main()
+
+if __name__ == '__main__':
+    main()

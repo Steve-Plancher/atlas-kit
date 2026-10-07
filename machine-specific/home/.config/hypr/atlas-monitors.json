@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "laptopOffWhenDocked": false,
+  "monitors": {
+    "AU Optronics 0x4599": {
+      "mode": "1920x1080@60.05",
+      "position": "0x457",
+      "scale": 1.25,
+      "transform": 0,
+      "enabled": true,
+      "lastName": "eDP-1",
+      "internal": true
+    },
+    "Lenovo Group Limited R27q-30 U533CZVW": {
+      "mode": "2560x1440@144.0",
+      "position": "0x0",
+      "scale": 1.6,
+      "transform": 2,
+      "enabled": true,
+      "lastName": "HDMI-A-1",
+      "internal": false
+    },
+    "GIGA-BYTE TECHNOLOGY CO. LTD. G32QC A 21340B010048": {
+      "mode": "2560x1440@165.00",
+      "position": "1536x0",
+      "scale": 1.25,
+      "transform": 0,
+      "enabled": true,
+      "lastName": "DP-5",
+      "internal": false
+    },
+    "GIGA-BYTE TECHNOLOGY CO. LTD. G32QC A 21340B007589": {
+      "mode": "2560x1440@164.84",
+      "position": "3760x0",
+      "scale": 1.25,
+      "transform": 0,
+      "enabled": true,
+      "lastName": "DP-6",
+      "internal": false
+    },
+    "Lenovo Group Limited E27q-20 V5WYM323": {
+      "mode": "2560x1440@59.95",
+      "position": "0x0",
+      "scale": 1.6,
+      "transform": 0,
+      "enabled": true,
+      "lastName": "HDMI-A-1",
+      "internal": false
+    }
+  }
+}

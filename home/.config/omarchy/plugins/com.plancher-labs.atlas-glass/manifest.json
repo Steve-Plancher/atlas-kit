@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "com.plancher-labs.atlas-glass",
+  "name": "A.T.L.A.S Glass",
+  "version": "1.0.0",
+  "author": "Claude / Steve Plancher",
+  "description": "Make windows see-through so the wallpaper and HUD show behind them.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Glass windows",
+    "description": "Window see-through level, frosted blur and presets.",
+    "category": "System",
+    "aliases": [
+      "glass",
+      "opacity",
+      "transparency"
+    ],
+    "allowMultiple": false
+  }
+}

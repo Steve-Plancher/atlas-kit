@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-help}" in
+  snap-menu) atlas-snap menu ;;
+  snap-guide) atlas-snap-overlay ;;
+  reload) omarchy-restart-shell 2>/dev/null || systemctl --user restart omarchy-shell atlas-quickshell 2>/dev/null || true; hyprctl reload ;;
+  rollback)
+    latest=$(ls -td /home/steve/atlas-os-backup-*-window-manager 2>/dev/null | head -n1)
+    [ -n "$latest" ] || { echo "No window-manager backup found"; exit 1; }
+    "$latest/rollback-window-manager.sh"
+    ;;
+  *) echo "Usage: atlas-window-manager-toggle {snap-menu|snap-guide|reload|rollback}" ;;
+esac
