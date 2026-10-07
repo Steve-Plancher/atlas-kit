@@ -17,6 +17,7 @@ warn() { printf '\033[1;33m! %s\033[0m\n' "$*"; }
 
 command -v omarchy >/dev/null || { echo "Omarchy isn't installed here. Install Omarchy first, then run this."; exit 1; }
 [[ $EUID -eq 0 ]] && { echo "Run as your normal user, not root."; exit 1; }
+command -v rsync >/dev/null || omarchy pkg add rsync || { echo "Needs rsync: omarchy pkg add rsync"; exit 1; }
 
 say "1/6  Backing up files that will be replaced → $BACKUP"
 ( cd "$KIT/home" && find . -type f ) | while read -r f; do
