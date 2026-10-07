@@ -1,9 +1,17 @@
+![A.T.L.A.S Kit](docs/images/hero-banner.jpg)
+
 # 🛰️ A.T.L.A.S Kit
 
 Steve's complete **A.T.L.A.S** desktop look and tools, packed so they can be put onto a fresh
 [Omarchy](https://omarchy.org) install in one go.
 
 > **Settings only.** No personal files, passwords, logins, browser data or SSH keys are in here.
+
+![The A.T.L.A.S desktop in Code Red](docs/images/desktop-code-red.jpg)
+
+### The whole install at a glance
+
+![Install steps: 1 Install Omarchy, 2 Sign in to GitHub, 3 Run install.sh, 4 Log out and back in](docs/images/install-steps.jpg)
 
 ---
 
@@ -47,6 +55,8 @@ Write the 48-digit key down somewhere that isn't this laptop.
 
 > 🚨 The Omarchy installer **erases the entire drive you pick**. Picking the Windows drive by mistake wipes Windows.
 
+![Pick the empty drive, not the Windows drive. Match the drive by its size](docs/images/pick-the-right-drive.jpg)
+
 ---
 
 ## 2. Install Omarchy on the spare drive
@@ -63,11 +73,15 @@ Write the 48-digit key down somewhere that isn't this laptop.
 3. If there's a **SATA/Storage mode** option, make sure it's **AHCI** (not RAID/RST). If you change it, Windows may need a fix later, so skip this if it's already AHCI.
 4. Save and exit (**F10**).
 
+![Secure Boot set to Disabled in the BIOS](docs/images/bios-secure-boot.jpg)
+
 ### 2.3 Boot the installer
 
 1. Plug in the USB stick.
 2. Restart and tap **F12** for the boot menu.
 3. Pick the **USB stick**.
+
+![Tap F12 for the boot menu and pick the USB stick](docs/images/boot-menu-f12.jpg)
 
 ### 2.4 Run the installer
 
@@ -172,6 +186,8 @@ systemctl --user enable --now atlas-display-dock
 
 ## 6. Everyday use
 
+![Left double-click changes the wallpaper only; right double-click changes the whole theme](docs/images/double-click-guide.jpg)
+
 | Want to… | Do this |
 |---|---|
 | Change color protocol | Click **STANDBY** in the bar, or left double-click the desktop and pick a colored A.T.L.A.S |
@@ -179,6 +195,10 @@ systemctl --user enable --now atlas-display-dock
 | Change the whole theme | **Right double-click** the desktop. ⚠️ This replaces the A.T.L.A.S look. Choose **Hackerman** to get it back |
 | See-through windows | Glass icon in the bar |
 | Voice typing | Hold **F9** and talk |
+
+The four color protocols:
+
+![Standby blue, Code Red crimson, Clean Slate amber, House Party violet](docs/images/protocols.jpg)
 
 Protocols from a terminal:
 
@@ -196,6 +216,10 @@ Each system lives on its own drive and they don't touch each other.
 
 - Restart and tap **F12** → pick **Windows Boot Manager** or **Omarchy/Linux**.
 - To change which one starts by default: **F2 (BIOS) → Boot sequence** → move your favorite to the top.
+
+The same **F12** menu you used to start the installer:
+
+![F12 boot menu](docs/images/boot-menu-f12.jpg)
 
 ---
 
