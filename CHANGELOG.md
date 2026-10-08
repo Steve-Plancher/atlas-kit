@@ -1,5 +1,20 @@
 # A.T.L.A.S OS changelog
 
+## v1.2.1: Version tracking (2026-10-08)
+
+### ✨ New features
+- **A.T.L.A.S OS version tracking:** every change now ships as a numbered release.
+  - `VERSION` file and a full `CHANGELOG.md` in the repo
+  - `atlas-version` shows the version a machine runs; `atlas-version --check` compares it with the latest GitHub release
+  - The installer records the installed version on the new machine
+  - `tools/release.sh` bumps the version, updates the changelog, runs the secret-scanning snapshot, tags and publishes the release
+
+### 📦 Apps added
+- None.
+
+### 🔒 Not included
+Personal files, passwords, logins, browser data, SSH keys. Secret scan passed.
+
 ## v1.2.0: Now Playing (Spotify) HUD (2026-10-08)
 
 ### ✨ New features

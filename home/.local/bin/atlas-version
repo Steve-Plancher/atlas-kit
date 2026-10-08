@@ -1,0 +1,12 @@
+#!/bin/bash
+# Show which A.T.L.A.S OS version this machine is running.
+#   atlas-version          → A.T.L.A.S OS v1.2.0
+#   atlas-version --check  → also compares with the latest release on GitHub
+v=$(cat "$HOME/.local/share/atlas/VERSION" 2>/dev/null || echo unknown)
+echo "A.T.L.A.S OS v$v"
+if [[ ${1:-} == --check ]]; then
+  latest=$(gh release view --repo Steve-Plancher/atlas-kit --json tagName -q .tagName 2>/dev/null)
+  if [[ -z $latest ]]; then echo "Couldn't reach GitHub (signed in? try: gh auth status)"
+  elif [[ v$v == "$latest" ]]; then echo "Up to date ($latest is the latest release)"
+  else echo "Newer release available: $latest. Update with: cd ~/atlas-kit && git pull && ./install.sh --no-apps"; fi
+fi
