@@ -55,3 +55,8 @@
 -- Enable touchpad gestures for moving focus (helpful on scrolling layout).
 -- hl.gesture({ fingers = 3, direction = "left", action = function() hl.dispatch(hl.dsp.focus({ direction = "l" })) end })
 -- hl.gesture({ fingers = 3, direction = "right", action = function() hl.dispatch(hl.dsp.focus({ direction = "r" })) end })
+
+-- Zone Vibe headset (2026-10-08): its "Consumer Control" input presses volume up/down by itself every
+-- time the headset switches between music and call mode, dragging the volume back to its own level.
+-- Ignore that input so the volume stays where it's set. Delete this line to undo.
+hl.device({ name = "logitech-zone-vibe-wireless-consumer-control", enabled = false })

@@ -2,7 +2,7 @@
 # A.T.L.A.S Protocols — switch the A.T.L.A.S color scheme. Colors only.
 #
 #   atlas-protocol                 show the active protocol
-#   atlas-protocol <name>          engage it (standby code-red clean-slate house-party)
+#   atlas-protocol <name>          engage it (standard deadlock focus vibe)
 #   atlas-protocol next            cycle to the next one
 #   atlas-protocol list            names, one per line
 #   atlas-protocol is <name>       exit 0 when <name> is active (bar menu ✓)
@@ -21,11 +21,11 @@ SHARE=$HOME/.local/share/atlas-protocol
 HUD_DIR=$HOME/.config/omarchy/plugins/com.plancher-labs.atlas-hud
 ART=$HOME/.config/omarchy/backgrounds/hackerman/00-atlas.png
 THEME_COLORS=$HOME/.config/omarchy/themes/hackerman/colors.toml
-ORDER=(standby code-red clean-slate house-party)
+ORDER=(standard deadlock focus vibe)
 
 mkdir -p "$STATE" "$SHARE/backgrounds"
 log() { echo "[atlas-protocol] $*" >&2; }
-current() { local n; n=$(cat "$STATE/current" 2>/dev/null); echo "${n:-standby}"; }
+current() { local n; n=$(cat "$STATE/current" 2>/dev/null); echo "${n:-standard}"; }
 valid() { [[ -f $CONF/$1.conf ]]; }
 
 load() {  # load <name> -> profile vars in the environment
@@ -55,7 +55,7 @@ recolor_cursors() {  # recolor_cursors <theme-name> <hue> <sat> <bright>
 
 build() {
   for name in "${ORDER[@]}"; do
-    [[ $name == standby ]] && continue
+    [[ $name == standard ]] && continue
     load "$name"
     local bg=$SHARE/backgrounds/00-atlas-protocol-$name.png
     log "building $name: wallpaper"
@@ -69,8 +69,8 @@ build() {
 
 # ── Apply steps (each one logs and carries on if it fails) ─────────────────
 apply_colors() {
-  if [[ $1 == standby ]]; then
-    cp "$CONF/standby.colors.toml" "$THEME_COLORS"
+  if [[ $1 == standard ]]; then
+    cp "$CONF/standard.colors.toml" "$THEME_COLORS"
   else
     sed -e "s/^accent = .*/accent = \"$ACCENT\"/" \
         -e "s/^red = .*/red = \"$ICE\"/" \
@@ -79,14 +79,14 @@ apply_colors() {
         -e "s/^selection = .*/selection = \"$SELECTION\"/" \
         -e "s/^muted = .*/muted = \"$MUTED\"/" \
         -e "s/^hyprland_active_border = .*/hyprland_active_border = \"rgba(${ICE#\#}ee) rgba(${ACCENT#\#}ee) rgba(${DEEP#\#}ee) 45deg\"/" \
-        "$CONF/standby.colors.toml" > "$THEME_COLORS"
+        "$CONF/standard.colors.toml" > "$THEME_COLORS"
   fi
   OMARCHY_THEME_SKIP_BACKGROUND=1 omarchy theme set hackerman >/dev/null 2>&1 || log "theme re-apply failed"
 }
 
 apply_wallpaper() {
   local bg
-  if [[ $1 == standby ]]; then bg=$(cat "$STATE/standby-bg" 2>/dev/null); [[ -f $bg ]] || bg=$ART
+  if [[ $1 == standard ]]; then bg=$(cat "$STATE/standard-bg" 2>/dev/null); [[ -f $bg ]] || bg=$ART
   else bg=$SHARE/backgrounds/00-atlas-protocol-$1.png; fi
   [[ -f $bg ]] || { log "missing $bg — run: atlas-protocol build"; return; }
   ATLAS_PROTOCOL_APPLYING=1 omarchy-theme-bg-set "$bg" >/dev/null 2>&1 || log "wallpaper set failed"
@@ -106,7 +106,7 @@ EOF
 
 apply_borders() {
   local a=${ACCENT#\#} i=${ICE#\#} d=${DEEP#\#}
-  if [[ $1 == standby ]]; then   # exact values from looknfeel.lua
+  if [[ $1 == standard ]]; then   # exact values from looknfeel.lua
     hyprctl eval "hl.config({ general = { col = {
       active_border = { colors = { 'rgba(a8ecffee)', 'rgba(35c4ffee)', 'rgba(1478e6dd)' }, angle = 45 },
       inactive_border = { colors = { 'rgba(0a2a4a99)', 'rgba(07304088)' }, angle = 45 },
@@ -136,10 +136,10 @@ engage() {
   local name=$1 from
   from=$(current)
   exec 9>"$STATE/lock"; flock 9
-  # Leaving Standby: remember its wallpaper so coming back restores it.
-  if [[ $from == standby && $name != standby ]]; then
+  # Leaving Standard: remember its wallpaper so coming back restores it.
+  if [[ $from == standard && $name != standard ]]; then
     local bg; bg=$(readlink -f "$HOME/.local/state/omarchy/current/background")
-    [[ $bg == "$SHARE"/backgrounds/* ]] || echo "$bg" > "$STATE/standby-bg"
+    [[ $bg == "$SHARE"/backgrounds/* ]] || echo "$bg" > "$STATE/standard-bg"
   fi
   load "$name"
   write_state "$name"      # HUD + borders + cursor follow this file
@@ -166,8 +166,23 @@ case "${1:-}" in
     done
     engage "$nxt" ;;
   *)
-    # Accept spoken-style names too: "Code Red", "house party", "clean_slate".
-    want=$(echo "$*" | tr '[:upper:]_ ' '[:lower:]--' | sed -e 's/^protocol-//' -e 's/-protocol$//')
+    # Accept whole spoken commands: "Atlas, initiate Deadlock Protocol",
+    # "engage focus protocol", "Vibe". Filler words are dropped, then old
+    # names and plain colors map onto the current four.
+    words=$(echo "$*" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z\n' ' ')
+    want=""
+    for w in $words; do
+      case $w in
+        atlas|hey|ok|okay|please|initiate|ignite|ignitiate|engage|activate|enable|start|run|switch|go|to|into|the|a|protocol|mode|now) ;;
+        *) want="${want:+$want-}$w" ;;
+      esac
+    done
+    case $want in
+      standby|normal|default|blue|home) want=standard ;;
+      code-red|red|dead-lock|lockdown|lock-down|alert) want=deadlock ;;
+      clean-slate|amber|gold|concentrate) want=focus ;;
+      house-party|violet|purple|vibes|vibing) want=vibe ;;
+    esac
     if valid "$want"; then engage "$want"
     else
       echo "usage: atlas-protocol [show|next|list|status|build|is <name>|${ORDER[*]// /|}]" >&2

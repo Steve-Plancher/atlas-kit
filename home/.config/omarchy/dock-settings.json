@@ -1,5 +1,5 @@
 {
-  "dockEnabled": true,
+  "dockEnabled": false,
   "visibilityMode": "hover",
   "preferredVisibilityMode": "hover",
   "autohide": true,
@@ -7,7 +7,7 @@
   "visibleWorkspace": "all",
   "autohideEdgeDepth": 1,
   "showFolderTitles": true,
-  "showBadges": false,
+  "showBadges": true,
   "glassmorphism": false,
   "blurOpacity": 0.68,
   "widgetsEnabled": false,

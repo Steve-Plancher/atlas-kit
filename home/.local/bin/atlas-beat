@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""A.T.L.A.S Beat: music analysis for the Vibe protocol's reactive HUD.
+
+Runs cava on the sound going TO the speakers/headset (the default sink's
+monitor; never the microphone, so the Zone Vibe stays in music mode) and
+prints one JSON line per frame (~30/s) for the HUD:
+
+    {"b": [32 levels 0..1, bass first], "l": loudness 0..1, "beat": 0|1, "drop": 0|1}
+
+beat = a kick (bass energy jumps above its recent average).
+drop = a big moment (a much bigger jump, or loud bass right after a quiet stretch).
+On drops it also flashes the window borders, at most once every 0.6 s, and puts
+them back to the active protocol's colors 150 ms later.
+
+The HUD starts this only in Vibe (music-reactive) while it is animating, and
+stops it otherwise. cava dies with it (PR_SET_PDEATHSIG).
+"""
+import ctypes, json, os, signal, subprocess, sys, tempfile, threading, time
+
+HOME = os.path.expanduser("~")
+STATE = os.path.join(HOME, ".local/state/atlas-protocol/state.conf")
+BARS = 32
+
+CAVA_CONF = f"""[general]
+bars = {BARS}
+framerate = 30
+autosens = 1
+[input]
+method = pipewire
+source = auto
+[output]
+method = raw
+raw_target = /dev/stdout
+data_format = ascii
+ascii_max_range = 1000
+bar_delimiter = 59
+frame_delimiter = 10
+channels = mono
+[smoothing]
+noise_reduction = 55
+"""
+
+
+def die_with_parent():
+    try:
+        ctypes.CDLL("libc.so.6").prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG
+    except Exception:
+        pass
+
+
+def protocol_colors():
+    s = {}
+    try:
+        for line in open(STATE):
+            k, _, v = line.strip().partition("=")
+            s[k] = v
+    except OSError:
+        pass
+    ok = lambda v: len(v) == 6 and all(c in "0123456789abcdefABCDEF" for c in v)
+    acc, ice, deep = s.get("accent", ""), s.get("ice", ""), s.get("deep", "")
+    return (acc, ice, deep) if ok(acc) and ok(ice) and ok(deep) else None
+
+
+def set_borders(c1, c2, c3):
+    lua = ("hl.config({ general = { col = { active_border = { colors = { "
+           f"'rgba({c1}ee)', 'rgba({c2}ee)', 'rgba({c3}dd)' }}, angle = 45 }} }} }})")
+    subprocess.run(["hyprctl", "eval", lua], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def restore_borders():
+    c = protocol_colors()  # read now: the protocol may have changed since the flash
+    if c:
+        acc, ice, deep = c
+        set_borders(ice, acc, deep)
+
+
+flash_lock = threading.Lock()
+
+
+def flash_borders():
+    if not flash_lock.acquire(blocking=False):
+        return
+    try:
+        c = protocol_colors()
+        if not c:
+            return
+        acc, ice, _ = c
+        set_borders("ffffff", ice, acc)
+        time.sleep(0.15)
+        restore_borders()
+    finally:
+        flash_lock.release()
+
+
+def main():
+    conf = tempfile.NamedTemporaryFile("w", prefix="atlas-beat-", suffix=".conf", delete=False)
+    conf.write(CAVA_CONF)
+    conf.close()
+    # cava asks PipeWire for a small buffer, which drops the WHOLE graph to quantum 512 and made
+    # Spotify underrun (music cut out). A relaxed latency keeps the graph at its normal 1024.
+    env = dict(os.environ, PIPEWIRE_LATENCY="2048/48000")
+    cava = subprocess.Popen(["cava", "-p", conf.name], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            text=True, bufsize=1, preexec_fn=die_with_parent, env=env)
+
+    def stop(*_):
+        cava.terminate()
+        os.unlink(conf.name)
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+
+    bass_avg = 0.0      # slow average of bass energy
+    loud_avg = 0.0      # slow average of overall loudness
+    quiet_for = 0       # frames of near-silence (sets up a "drop")
+    last_beat = last_drop = 0.0
+    for line in cava.stdout:
+        parts = [p for p in line.strip().split(";") if p]
+        if len(parts) != BARS:
+            continue
+        b = [min(1.0, int(p) / 1000) for p in parts]
+        bass = sum(b[:4]) / 4
+        level = sum(b) / BARS
+        now = time.monotonic()
+
+        beat = drop = 0
+        if bass > 0.25 and bass > bass_avg * 1.35 and now - last_beat > 0.18:
+            beat, last_beat = 1, now
+        big = bass > 0.55 and bass > bass_avg * 1.9
+        after_quiet = quiet_for > 45 and bass > 0.5          # ~1.5 s of quiet, then a hit
+        if (big or after_quiet) and now - last_drop > 0.6:
+            drop, last_drop, beat = 1, now, 1
+            threading.Thread(target=flash_borders, daemon=True).start()
+
+        bass_avg = bass_avg * 0.93 + bass * 0.07
+        loud_avg = loud_avg * 0.97 + level * 0.03
+        quiet_for = quiet_for + 1 if level < max(0.04, loud_avg * 0.35) else 0
+
+        print(json.dumps({"b": [round(x, 2) for x in b], "l": round(level, 3), "beat": beat, "drop": drop},
+                         separators=(",", ":")), flush=True)
+    stop()
+
+
+if __name__ == "__main__":
+    main()

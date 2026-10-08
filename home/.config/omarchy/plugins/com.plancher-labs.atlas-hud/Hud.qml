@@ -115,6 +115,48 @@ Item {
   property real wmEnergy: 0
   property real wmPulse: 0
 
+  // ── Vibe: music-reactive HUD ───────────────────────────────────────────
+  // In the Vibe protocol, atlas-beat (cava on the speakers' monitor, never the
+  // mic) streams 32 frequency levels, loudness, beats and drops. The spectrum
+  // ring is always on; drops add a lettering glitch (and atlas-beat flashes the
+  // window borders). `atlas-vibe calm` turns it off: Vibe colors only.
+  property string vibeMode: "mix"
+  readonly property bool musicOn: protocol === "vibe" && vibeMode !== "calm"
+  property var mBands: []
+  property real mLevel: 0
+  property real mBeat: 0
+  property real mDrop: 0
+  readonly property int effectiveWordmark: musicOn ? (mDrop > 0.35 ? 3 : 4) : wordmarkId
+  function band(i) { var a = mBands; return a.length > i ? a[i] : 0 }
+  onMusicOnChanged: if (!musicOn) { mBands = []; mLevel = 0; mBeat = 0; mDrop = 0 }
+
+  FileView {
+    path: root.home + "/.local/state/atlas-protocol/vibe-mode"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.vibeMode = String(text()).trim() === "calm" ? "calm" : "mix"
+    onLoadFailed: root.vibeMode = "mix"
+  }
+
+  Process {
+    id: beatProc
+    running: root.musicOn && root.animate
+    command: [root.home + "/.local/bin/atlas-beat"]
+    stdout: SplitParser {
+      onRead: function(line) {
+        var e
+        try { e = JSON.parse(line) } catch (err) { return }
+        root.mBands = e.b || []
+        root.mLevel = e.l || 0
+        root.wmEnergy = Math.min(1, Math.max(root.wmEnergy, root.mLevel * 1.8))
+        if (e.beat) { root.mBeat = 1; root.wmPulse = 1 }
+        if (e.drop) root.mDrop = 1
+      }
+    }
+    onRunningChanged: if (!running) { root.mBands = []; root.mLevel = 0 }
+  }
+
   // Telemetry
   property real cpu: 0
   property real mem: 0
@@ -279,6 +321,8 @@ Item {
       root.tick++
       if (root.wmPulse > 0) root.wmPulse = Math.max(0, root.wmPulse - 0.055)
       if (root.wmEnergy > 0) root.wmEnergy = Math.max(0, root.wmEnergy - 0.018)
+      if (root.mBeat > 0) root.mBeat = Math.max(0, root.mBeat - 0.09)
+      if (root.mDrop > 0) root.mDrop = Math.max(0, root.mDrop - 0.03)
       if (root.tick % 2) return  // typewriter steps every other frame (~15/s)
       var msg = root.currentMessage
       if (root.erasing) {
@@ -321,9 +365,15 @@ Item {
       readonly property bool live: root.animate && !fullscreenHere
       // This screen's animation time in ms; stands still while the screen is frozen.
       property real t: 0
+      // Extra ring rotation earned by loud music (Vibe); added to the rings' clock.
+      property real boost: 0
       Connections {
         target: root
-        function onTickChanged() { if (panel.live) panel.t += root.frameMs }
+        function onTickChanged() {
+          if (!panel.live) return
+          panel.t += root.frameMs
+          if (root.musicOn) panel.boost += root.frameMs * root.mLevel * 2.5
+        }
       }
 
       // Same cover-fit as the wallpaper's PreserveAspectCrop.
@@ -353,7 +403,7 @@ Item {
 
           GlowDisc {
             anchors.fill: parent
-            opacity: root.wave(panel.t, 5600, 0.4, 0.85)
+            opacity: Math.min(1, root.wave(panel.t, 5600, 0.4, 0.85) + root.mLevel * 0.6)
             stops: [[0.0, root.alpha(root.cyan, 0.20)], [0.5, root.alpha(root.deep, 0.07)], [1.0, root.alpha(root.deep, 0.0)]]
           }
         }
@@ -393,43 +443,69 @@ Item {
         Item {
           anchors.fill: parent
           opacity: root.stage(0.05, 0.45)
+          transform: Scale { origin.x: root.coreX; origin.y: root.coreY; xScale: 1 + root.mBeat * 0.035; yScale: 1 + root.mBeat * 0.035 }
 
           // Heavy outer arcs, slow clockwise.
           Ring {
-            ms: panel.t
+            ms: panel.t + panel.boost
             radius: 276; lineWidth: 3.5; period: 48000
             strokeColor: root.alpha(root.cyan, 0.8)
             segments: [[200, 52], [292, 38], [20, 52], [112, 38]]
           }
           // Fine tick ring, counter-clockwise.
           Ring {
-            ms: panel.t
+            ms: panel.t + panel.boost
             radius: 238; lineWidth: 2; period: -70000
             strokeColor: root.alpha(root.ice, 0.35)
             segments: root.ticks(36, 4)
           }
           // Outer graduation ring, very slow.
           Ring {
-            ms: panel.t
+            ms: panel.t + panel.boost
             radius: 304; lineWidth: 7; period: 140000
             strokeColor: root.alpha(root.deep, 0.45)
             segments: root.ticks(72, 1.1)
           }
           // Thin halo.
           Ring {
-            ms: panel.t
+            ms: panel.t + panel.boost
             radius: 322; lineWidth: 1; period: 0
             strokeColor: root.alpha(root.cyan, 0.22)
             segments: [[0, 360]]
           }
           // Fast scanner pair.
           Ring {
-            ms: panel.t
+            ms: panel.t + panel.boost
             radius: 222; lineWidth: 3; period: 7000
             strokeColor: root.alpha(root.ice, 0.95)
             segments: [[0, 16], [180, 16]]
           }
         }
+        // ── Vibe spectrum ring ──────────────────────────────────────
+        // 64 bars just outside the halo: bass at the top, treble at the bottom,
+        // mirrored left/right. Plain rectangles, so a frame is only geometry.
+        Item {
+          x: root.coreX; y: root.coreY
+          opacity: root.musicOn ? root.stage(0.1, 0.5) : 0
+          visible: opacity > 0
+          Behavior on opacity { NumberAnimation { duration: 600 } }
+          Repeater {
+            model: 64
+            Rectangle {
+              required property int index
+              // pow(…, 0.6) lifts the mid levels so everyday music fills the ring, not just loud peaks.
+              readonly property real v: Math.pow(root.band(index < 32 ? index : 63 - index), 0.6)
+              width: 6; height: 8 + v * 96
+              x: -width / 2; y: -(334 + height)
+              radius: 2
+              antialiasing: true
+              color: v > 0.7 ? root.ice : root.cyan
+              opacity: 0.35 + v * 0.65
+              transform: Rotation { origin.x: 2.5; origin.y: 334 + height; angle: (index + 0.5) * 360 / 64 }
+            }
+          }
+        }
+
         // ── Holo-pad and beam ───────────────────────────────────────
         Item {
           anchors.fill: parent
@@ -465,7 +541,8 @@ Item {
             GlowDisc {
               id: padCore
               anchors.fill: parent
-              opacity: root.wave(panel.t, 2800, 0.5, 1.0)
+              opacity: Math.min(1, root.wave(panel.t, 2800, 0.5, 1.0) + root.mBeat * 0.5)
+              scale: 1 + root.mBeat * 0.35
               stops: [[0.0, root.alpha(root.ice, 0.9)], [0.35, root.alpha(root.cyan, 0.45)], [1.0, root.alpha(root.cyan, 0.0)]]
             }
           }
@@ -638,7 +715,7 @@ Item {
           x: 420; y: 368
           width: 830; height: 125
           clip: true
-          visible: root.wordmarkId === 0
+          visible: root.effectiveWordmark === 0
           Rectangle {
             id: shimmer
             // 3 s wait, 1.7 s sweep, 5.5 s rest.
@@ -792,7 +869,7 @@ Item {
     y: 368
     width: 830
     height: 125
-    visible: root.wordmarkId > 0
+    visible: root.effectiveWordmark > 0
 
     Image {
       id: plate
@@ -810,7 +887,7 @@ Item {
       fragmentShader: "file://" + root.pluginDir + "/build/wordmark.frag.qsb"
       property variant src: plate
       property real uTime: wm.t / 1000
-      property real uMode: root.wordmarkId
+      property real uMode: root.effectiveWordmark
       property real uEnergy: root.wmEnergy
       property real uPulse: root.wmPulse
       property real uBoot: root.boot

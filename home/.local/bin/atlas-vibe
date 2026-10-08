@@ -1,0 +1,16 @@
+#!/bin/bash
+# Vibe protocol's music reaction.
+#   atlas-vibe            show the current setting
+#   atlas-vibe on         music-reactive (spectrum ring + beat effects, drops flash the borders)
+#   atlas-vibe calm       Vibe colors only, no music reaction
+#   atlas-vibe is on|calm exit 0 when that is the setting (bar menu ✓)
+# The HUD watches the state file, so changes apply live.
+f=$HOME/.local/state/atlas-protocol/vibe-mode
+cur() { [[ $(cat "$f" 2>/dev/null) == calm ]] && echo calm || echo on; }
+case "${1:-}" in
+  "") cur ;;
+  on|mix|music|react|reactive) mkdir -p "${f%/*}"; echo mix > "$f"; echo on ;;
+  calm|off) mkdir -p "${f%/*}"; echo calm > "$f"; echo calm ;;
+  is) [[ $(cur) == "${2:-}" ]] ;;
+  *) echo "usage: atlas-vibe [on|calm|is on|is calm]" >&2; exit 1 ;;
+esac

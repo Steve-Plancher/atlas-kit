@@ -7,7 +7,7 @@ Steve's complete **A.T.L.A.S** desktop look and tools, packed so they can be put
 
 > **Settings only.** No personal files, passwords, logins, browser data or SSH keys are in here.
 
-![The A.T.L.A.S desktop in Code Red](docs/images/desktop-code-red.jpg)
+![The A.T.L.A.S desktop in Deadlock Protocol](docs/images/desktop-code-red.jpg)
 
 ### The whole install at a glance
 
@@ -190,23 +190,47 @@ systemctl --user enable --now atlas-display-dock
 
 | Want to… | Do this |
 |---|---|
-| Change color protocol | Click **STANDBY** in the bar, or left double-click the desktop and pick a colored A.T.L.A.S |
+| Change color protocol | Click the protocol name (e.g. **STANDARD**) in the bar, or left double-click the desktop and pick a colored A.T.L.A.S |
 | Change wallpaper only | **Left double-click** the desktop |
 | Change the whole theme | **Right double-click** the desktop. ⚠️ This replaces the A.T.L.A.S look. Choose **Hackerman** to get it back |
 | See-through windows | Glass icon in the bar |
 | Voice typing | Hold **F9** and talk |
 
-The four color protocols:
+The four protocols. They change **colors only**: theme, wallpaper art, HUD, borders and cursor.
 
-![Standby blue, Code Red crimson, Clean Slate amber, House Party violet](docs/images/protocols.jpg)
+![Standard blue, Deadlock crimson, Focus amber, Vibe violet](docs/images/protocols.jpg)
 
-Protocols from a terminal:
+| Protocol | Color | Say / type |
+|---|---|---|
+| **Standard** | Blue (everyday) | "Atlas, initiate Standard Protocol" |
+| **Deadlock** | Crimson | "Atlas, initiate Deadlock Protocol" |
+| **Focus** | Amber | "Atlas, initiate Focus Protocol" |
+| **Vibe** | Violet, **reacts to music** | "Atlas, initiate Vibe Protocol" |
+
+Protocols from a terminal. Whole spoken sentences work too, ready for the future voice assistant:
 
 ```bash
-atlas-protocol                 # which one is active
-atlas-protocol code-red        # standby | code-red | clean-slate | house-party
-atlas-protocol next            # cycle to the next one
+atlas-protocol                                   # which one is active
+atlas-protocol deadlock                          # standard | deadlock | focus | vibe
+atlas-protocol "Atlas, initiate Focus Protocol"  # filler words are ignored
+atlas-protocol next                              # cycle to the next one
 ```
+
+### Vibe: music-reactive HUD
+
+In **Vibe**, the HUD reacts to whatever is playing: a 64-bar spectrum ring around the core, rings that
+swell on kicks and spin faster when it's loud, a flashing floor pad, and, on big drops only, a lettering
+glitch plus a quick window-border flash.
+
+![Vibe protocol: violet spectrum ring around the A.T.L.A.S core](docs/images/vibe-spectrum.jpg)
+
+```bash
+atlas-vibe on      # music-reactive (default)
+atlas-vibe calm    # Vibe colors only
+```
+
+It listens to the sound going **to** the speakers/headset via `cava`, never the microphone, and pauses
+outside Vibe, behind fullscreen windows, and when the laptop runs hot.
 
 ---
 
@@ -296,7 +320,8 @@ hyprctl configerrors
 | `machine-specific/` | Things tuned to the old laptop, **not installed automatically** |
 | `install.sh` | The installer |
 
-**Included:** A.T.L.A.S blue theme colors · A.T.L.A.S wallpapers · live HUD · Protocols (Standby,
-Code Red, Clean Slate, House Party; colors only) · bar layout and custom widgets · glass · snap and
+**Included:** A.T.L.A.S blue theme colors · A.T.L.A.S wallpapers · live HUD · Protocols (Standard,
+Deadlock, Focus, Vibe; colors only, Vibe music-reactive) · speaker panel without the mic meter
+(keeps Bluetooth-style headsets out of call mode) · bar layout and custom widgets · glass · snap and
 title bars · lock screen · notifications · agents widget · Atlas-Cyan animated cursor · window look
 and keybindings · terminal configs · Voxtype config.

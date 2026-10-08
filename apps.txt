@@ -3,6 +3,7 @@ bitwarden
 bitwarden-cli
 breeze-cursors
 capitaine-cursors
+cava
 claude-desktop
 cmake
 discord

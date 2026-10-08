@@ -60,7 +60,7 @@ say "5/6  Rebuilding protocol cursors and wallpapers, applying the A.T.L.A.S the
 "$HOME/.local/bin/atlas-protocol" build || warn "protocol build failed (needs imagemagick, xcur2png, xorg-xcursorgen)"
 [[ -x $HOME/.config/omarchy/plugins/com.plancher-labs.atlas-hud/build-shader.sh ]] && \
   "$HOME/.config/omarchy/plugins/com.plancher-labs.atlas-hud/build-shader.sh" >/dev/null 2>&1
-echo standby > "$HOME/.local/state/atlas-protocol/current" 2>/dev/null || true
+echo standard > "$HOME/.local/state/atlas-protocol/current" 2>/dev/null || true
 omarchy theme set hackerman >/dev/null 2>&1 || warn "theme set failed"
 omarchy-theme-bg-set "$HOME/.config/omarchy/backgrounds/hackerman/00-atlas.png" >/dev/null 2>&1
 hyprctl setcursor Atlas-Cyan 24 >/dev/null 2>&1

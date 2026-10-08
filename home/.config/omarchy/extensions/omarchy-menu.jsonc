@@ -30,8 +30,10 @@
 
   // ---- A.T.L.A.S Protocols (atlas-protocol bar widget) ----
   "protocol": {"icon":"󰒃","label":"Protocols","aliases":["protocols","code","codes","mode"]},
-  "protocol.standby": {"icon":"󰚩","label":"Standby","description":"Everyday A.T.L.A.S blue","action":"/home/steve/.local/bin/atlas-protocol standby","checked":"/home/steve/.local/bin/atlas-protocol is standby"},
-  "protocol.code-red": {"icon":"󰀦","label":"Code Red","description":"Crimson colors","action":"/home/steve/.local/bin/atlas-protocol code-red","checked":"/home/steve/.local/bin/atlas-protocol is code-red"},
-  "protocol.clean-slate": {"icon":"󰀘","label":"Clean Slate","description":"Amber colors","action":"/home/steve/.local/bin/atlas-protocol clean-slate","checked":"/home/steve/.local/bin/atlas-protocol is clean-slate"},
-  "protocol.house-party": {"icon":"󰝚","label":"House Party","description":"Violet colors","action":"/home/steve/.local/bin/atlas-protocol house-party","checked":"/home/steve/.local/bin/atlas-protocol is house-party"},
+  "protocol.standard": {"icon":"󰚩","label":"Standard Protocol","description":"Everyday A.T.L.A.S blue","action":"/home/steve/.local/bin/atlas-protocol standard","checked":"/home/steve/.local/bin/atlas-protocol is standard"},
+  "protocol.deadlock": {"icon":"󰀦","label":"Deadlock Protocol","description":"Crimson colors","action":"/home/steve/.local/bin/atlas-protocol deadlock","checked":"/home/steve/.local/bin/atlas-protocol is deadlock"},
+  "protocol.focus": {"icon":"󰀘","label":"Focus Protocol","description":"Amber colors","action":"/home/steve/.local/bin/atlas-protocol focus","checked":"/home/steve/.local/bin/atlas-protocol is focus"},
+  "protocol.vibe": {"icon":"󰝚","label":"Vibe Protocol","description":"Violet colors","action":"/home/steve/.local/bin/atlas-protocol vibe","checked":"/home/steve/.local/bin/atlas-protocol is vibe"},
+  "protocol.vibe-music": {"icon":"󰝚","label":"Vibe · Music reactive","description":"Spectrum ring + beat effects; drops flash the borders","action":"/home/steve/.local/bin/atlas-vibe on","checked":"/home/steve/.local/bin/atlas-vibe is on"},
+  "protocol.vibe-calm": {"icon":"󰽥","label":"Vibe · Calm","description":"Vibe colors only, no music reaction","action":"/home/steve/.local/bin/atlas-vibe calm","checked":"/home/steve/.local/bin/atlas-vibe is calm"},
 }

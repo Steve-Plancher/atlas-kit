@@ -14,7 +14,7 @@ if f then
 end
 
 local hex = "^%x%x%x%x%x%x$"
-if s.name and s.name ~= "standby" and (s.accent or ""):match(hex) and (s.ice or ""):match(hex) and (s.deep or ""):match(hex) then
+if s.name and s.name ~= "standard" and (s.accent or ""):match(hex) and (s.ice or ""):match(hex) and (s.deep or ""):match(hex) then
   hl.config({
     general = {
       col = {

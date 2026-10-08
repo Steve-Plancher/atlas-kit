@@ -1,7 +1,7 @@
 #!/bin/bash
 # A.T.L.A.S fork of omarchy-theme-bg-set: picking a protocol wallpaper
 # (00-atlas-protocol-<name>.png) engages that whole protocol, and picking the
-# original 00-atlas.png while a protocol is on returns to Standby. Any other
+# original 00-atlas.png while a protocol is on returns to Standard. Any other
 # wallpaper is just set, exactly like the packaged command.
 
 pkg=/usr/share/omarchy/bin/omarchy-theme-bg-set
@@ -12,7 +12,7 @@ name=$(basename "$file")
 if [[ $name =~ ^00-atlas-protocol-([a-z-]+)\.png$ ]] && [[ -f $HOME/.config/atlas-protocol/${BASH_REMATCH[1]}.conf ]]; then
   exec "$HOME/.local/bin/atlas-protocol" "${BASH_REMATCH[1]}"
 fi
-if [[ $file == "$HOME/.config/omarchy/backgrounds/hackerman/00-atlas.png" ]] && [[ $("$HOME/.local/bin/atlas-protocol") != standby ]]; then
-  exec "$HOME/.local/bin/atlas-protocol" standby
+if [[ $file == "$HOME/.config/omarchy/backgrounds/hackerman/00-atlas.png" ]] && [[ $("$HOME/.local/bin/atlas-protocol") != standard ]]; then
+  exec "$HOME/.local/bin/atlas-protocol" standard
 fi
 exec "$pkg" "$@"
