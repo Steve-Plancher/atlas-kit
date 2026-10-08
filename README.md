@@ -232,6 +232,14 @@ atlas-vibe calm    # Vibe colors only
 It listens to the sound going **to** the speakers/headset via `cava`, never the microphone, and pauses
 outside Vibe, behind fullscreen windows, and when the laptop runs hot.
 
+### Now Playing (Spotify)
+
+Whenever Spotify is playing, a **NOW PLAYING** panel fades in under System Telemetry on the HUD, styled
+to match: cover art in a bracketed frame, title, artist, album and a live time gauge. In Vibe it also gets a
+mini equalizer. It fades out when the music pauses or Spotify closes, in every protocol.
+
+![Now Playing panel: cover art, title, artist, album, time gauge and mini equalizer](docs/images/now-playing.jpg)
+
 ---
 
 ## 7. Switching between Windows and A.T.L.A.S
@@ -321,7 +329,7 @@ hyprctl configerrors
 | `install.sh` | The installer |
 
 **Included:** A.T.L.A.S blue theme colors · A.T.L.A.S wallpapers · live HUD · Protocols (Standard,
-Deadlock, Focus, Vibe; colors only, Vibe music-reactive) · speaker panel without the mic meter
+Deadlock, Focus, Vibe; colors only, Vibe music-reactive) · Now Playing (Spotify) HUD panel · speaker panel without the mic meter
 (keeps Bluetooth-style headsets out of call mode) · bar layout and custom widgets · glass · snap and
 title bars · lock screen · notifications · agents widget · Atlas-Cyan animated cursor · window look
 and keybindings · terminal configs · Voxtype config.

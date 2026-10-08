@@ -17,6 +17,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Hyprland
+import Quickshell.Services.Mpris
 
 Item {
   id: root
@@ -123,6 +124,29 @@ Item {
   property string vibeMode: "mix"
   readonly property bool musicOn: protocol === "vibe" && vibeMode !== "calm"
   property var mBands: []
+
+  // ── Now Playing (Spotify) ──────────────────────────────────────────────
+  // The Spotify MPRIS player, if one is running. The panel shows only while it plays.
+  readonly property var spotify: {
+    var ps = Mpris.players.values
+    for (var i = 0; i < ps.length; i++) {
+      var p = ps[i]
+      if (String(p.identity).toLowerCase().indexOf("spotify") >= 0 || String(p.dbusName).toLowerCase().indexOf("spotify") >= 0) return p
+    }
+    return null
+  }
+  readonly property bool spotifyPlaying: !!spotify && spotify.isPlaying && String(spotify.trackTitle || "") !== ""
+  function clockTime(sec) {
+    sec = Math.max(0, Math.floor(sec || 0))
+    var m = Math.floor(sec / 60), s = sec % 60
+    return m + ":" + (s < 10 ? "0" : "") + s
+  }
+  // MPRIS position has no change signal; nudge it once a second while visible.
+  Timer {
+    interval: 1000; repeat: true
+    running: root.spotifyPlaying && root.artActive
+    onTriggered: if (root.spotify) root.spotify.positionChanged()
+  }
   property real mLevel: 0
   property real mBeat: 0
   property real mDrop: 0
@@ -769,6 +793,86 @@ Item {
             value: Math.max(0, Math.min(1, (root.temp - 30) / 70))
             readout: Math.round(root.temp) + "°C"
             hot: root.temp >= 85
+          }
+        }
+
+        // ── Now Playing: left, under telemetry (only while Spotify plays) ──
+        Column {
+          id: nowPlaying
+          x: 70; y: 712
+          spacing: 10
+          opacity: root.spotifyPlaying ? root.stage(0.55, 0.9) : 0
+          visible: opacity > 0.01
+          Behavior on opacity { NumberAnimation { duration: 500; easing.type: Easing.InOutQuad } }
+
+          HudText { text: "▌NOW PLAYING  ·  SPOTIFY"; color: root.ice; size: 15; spacing: 3; bold: true }
+
+          Row {
+            spacing: 14
+            // Album art in a HUD frame with corner brackets.
+            Item {
+              width: 78; height: 78
+              Rectangle { anchors.fill: parent; color: root.alpha(root.cyan, 0.10); border.color: root.alpha(root.cyan, 0.55); border.width: 1 }
+              Image {
+                anchors.fill: parent; anchors.margins: 3
+                source: root.spotify ? (root.spotify.trackArtUrl || "") : ""
+                fillMode: Image.PreserveAspectCrop
+                asynchronous: true; cache: true; smooth: true
+                sourceSize.width: 160; sourceSize.height: 160
+              }
+              Repeater {
+                model: 4
+                Item {
+                  required property int index
+                  x: index % 2 ? parent.width - 10 : -2; y: index < 2 ? -2 : parent.height - 10
+                  width: 12; height: 12
+                  Rectangle { x: index % 2 ? 10 : 0; width: 2; height: 12; color: root.ice }
+                  Rectangle { y: index < 2 ? 0 : 10; width: 12; height: 2; color: root.ice }
+                }
+              }
+            }
+            Column {
+              spacing: 5
+              anchors.verticalCenter: parent.verticalCenter
+              HudText {
+                width: 260; elide: Text.ElideRight
+                text: root.spotify ? String(root.spotify.trackTitle || "").toUpperCase() : ""
+                color: root.ice; size: 18; spacing: 2; bold: true
+              }
+              HudText {
+                width: 260; elide: Text.ElideRight
+                text: root.spotify ? String(root.spotify.trackArtist || "") : ""
+                color: root.cyan; size: 14; spacing: 2
+              }
+              HudText {
+                width: 260; elide: Text.ElideRight
+                text: root.spotify ? String(root.spotify.trackAlbum || "") : ""
+                color: root.alpha(root.ice, 0.6); size: 12; spacing: 2
+              }
+            }
+          }
+
+          // Progress, built like the telemetry gauges.
+          Gauge {
+            label: "TIME"
+            value: root.spotify && root.spotify.length > 0 ? Math.min(1, root.spotify.position / root.spotify.length) : 0
+            readout: root.spotify ? root.clockTime(root.spotify.position) + " / " + root.clockTime(root.spotify.length) : ""
+          }
+
+          // Live mini equalizer in Vibe (fed by atlas-beat); hidden elsewhere.
+          Row {
+            visible: root.musicOn && root.mBands.length > 0
+            spacing: 3
+            Repeater {
+              model: 24
+              Rectangle {
+                required property int index
+                readonly property real v: Math.pow(root.band(index), 0.6)
+                width: 9; height: 22
+                color: "transparent"
+                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 2 + parent.v * 20; color: parent.v > 0.7 ? root.ice : root.cyan; opacity: 0.4 + parent.v * 0.6 }
+              }
+            }
           }
         }
 
