@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
@@ -11,9 +12,9 @@ Panel {
   readonly property var codexUsage: bar && bar.shell ? bar.shell.serviceFor(moduleName) : null
   readonly property var primaryWindow: codexUsage ? codexUsage.primaryWindow : null
   readonly property var secondaryWindow: codexUsage ? codexUsage.secondaryWindow : null
-  readonly property color foreground: bar ? bar.foreground : Color.foreground
+  readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
   readonly property color dim: Qt.darker(foreground, 1.55)
-  readonly property color urgent: bar ? bar.urgent : Color.urgent
+  readonly property color urgent: bar ? bar.urgent : Commons.Color.urgent
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   property double now: Date.now()
@@ -41,14 +42,14 @@ Panel {
   }
 
   function logoSource(surfaceColor) {
-    return colorLuminance(surfaceColor || Color.background) >= 0.5
+    return colorLuminance(surfaceColor || Commons.Color.background) >= 0.5
       ? Qt.resolvedUrl("assets/OpenAI-black-monoblossom.svg")
       : Qt.resolvedUrl("assets/OpenAI-white-monoblossom.svg")
   }
 
   function capacityColor(rateWindow) {
     var remaining = Model.remainingPercent(rateWindow)
-    return remaining !== null && remaining <= 20 ? urgent : Color.accent
+    return remaining !== null && remaining <= 20 ? urgent : Commons.Color.accent
   }
 
   function resetText(rateWindow) {
@@ -126,7 +127,7 @@ Panel {
       spacing: Style.space(5)
 
       Image {
-        source: root.logoSource(root.bar ? root.bar.background : Color.bar.background)
+        source: root.logoSource(root.bar ? root.bar.background : Commons.Color.bar.background)
         width: Style.space(15)
         height: Style.space(15)
         sourceSize.width: width
@@ -153,7 +154,7 @@ Panel {
       spacing: Style.space(1)
 
       Image {
-        source: root.logoSource(root.bar ? root.bar.background : Color.bar.background)
+        source: root.logoSource(root.bar ? root.bar.background : Commons.Color.bar.background)
         width: Style.space(14)
         height: Style.space(14)
         sourceSize.width: width
@@ -237,7 +238,7 @@ Panel {
                   anchors.centerIn: parent
                   width: Style.space(30)
                   height: Style.space(30)
-                  source: root.logoSource(Color.popups.background)
+                  source: root.logoSource(Commons.Color.popups.background)
                   sourceSize.width: width
                   sourceSize.height: height
                   fillMode: Image.PreserveAspectFit
@@ -327,8 +328,8 @@ Panel {
     readonly property color capacityColor: root.capacityColor(rateWindow)
 
     implicitHeight: cardContent.implicitHeight + Style.space(24)
-    color: Style.normalFillFor(root.foreground, Color.accent)
-    borderSpec: Border.controlSpec("normal", root.foreground, Color.accent)
+    color: Style.normalFillFor(root.foreground, Commons.Color.accent)
+    borderSpec: Border.controlSpec("normal", root.foreground, Commons.Color.accent)
     radius: Style.cornerRadius
 
     Column {

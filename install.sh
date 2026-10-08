@@ -56,6 +56,9 @@ grep -vE '^\s*(#|$)' "$KIT/plugins.txt" | while read -r name url commit; do
   git clone -q "$url" "$PLUG/$name" && git -C "$PLUG/$name" checkout -q "$commit" && echo "  $name ✓" || warn "could not fetch $name"
 done
 
+# Qt 6.12 shadows Omarchy's Color singleton; qualify palette refs in every plugin (idempotent).
+python3 "$KIT/tools/qt612-color-fix.py" "$PLUG" || warn "Qt 6.12 color fix failed"
+
 say "5/6  Rebuilding protocol cursors and wallpapers, applying the A.T.L.A.S theme"
 "$HOME/.local/bin/atlas-protocol" build || warn "protocol build failed (needs imagemagick, xcur2png, xorg-xcursorgen)"
 [[ -x $HOME/.config/omarchy/plugins/com.plancher-labs.atlas-hud/build-shader.sh ]] && \

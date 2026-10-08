@@ -10,6 +10,7 @@ discord
 ex-vi-compat
 google-chrome
 gst-plugins-ugly
+lazydocker
 lxappearance
 mda.lv2
 microsoft-edge-stable-bin

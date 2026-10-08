@@ -8,6 +8,7 @@ import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 Panel {
@@ -15,7 +16,7 @@ Panel {
   ipcTarget: root.moduleName
 
   readonly property string glass: Quickshell.env("HOME") + "/.local/bin/atlas-glass"
-  readonly property color foreground: bar ? bar.barForeground : Color.foreground
+  readonly property color foreground: bar ? bar.barForeground : Commons.Color.foreground
   readonly property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.58)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 

@@ -9,6 +9,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 Panel {
@@ -16,7 +17,7 @@ Panel {
   ipcTarget: root.moduleName
 
   readonly property string snap: Quickshell.env("HOME") + "/.local/bin/atlas-snap"
-  readonly property color foreground: bar ? bar.barForeground : Color.foreground
+  readonly property color foreground: bar ? bar.barForeground : Commons.Color.foreground
   readonly property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.58)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   property var windows: []
@@ -116,12 +117,12 @@ Panel {
     width: Math.max(12, badgeText.implicitWidth + 6)
     height: 12
     radius: 6
-    color: Color.accent
+    color: Commons.Color.accent
     Text {
       id: badgeText
       anchors.centerIn: parent
       text: root.windows.length
-      color: Color.background
+      color: Commons.Color.background
       font.family: root.fontFamily
       font.pixelSize: 9
       font.bold: true
@@ -206,7 +207,7 @@ Panel {
               width: listColumn.width
               implicitHeight: rowInner.implicitHeight + Style.spacing.lg
               foreground: root.bar.foreground
-              fill: Style.hoverFillFor(root.bar.foreground, Color.accent)
+              fill: Style.hoverFillFor(root.bar.foreground, Commons.Color.accent)
               hasCursor: rowMouse.containsMouse
 
               RowLayout {

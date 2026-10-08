@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 // Compact now-playing card for cliamp. Clean notification layout driven by
 // MPRIS, with visualizer frames from `cliamp visstream`.
@@ -10,16 +11,16 @@ Item {
     property bool active: true
     signal dismissRequested()
 
-    readonly property color bg: Color.popups.background
-    readonly property color fg: Color.popups.text
-    readonly property color dim: Color.muted
-    readonly property color accent: Color.foreground
+    readonly property color bg: Commons.Color.popups.background
+    readonly property color fg: Commons.Color.popups.text
+    readonly property color dim: Commons.Color.muted
+    readonly property color accent: Commons.Color.foreground
     readonly property color edge: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.42)
     readonly property color softEdge: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.12)
     readonly property color surface: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.045)
-    readonly property color green: Color.muted
-    readonly property color yellow: Color.foreground
-    readonly property color red: Color.urgent
+    readonly property color green: Commons.Color.muted
+    readonly property color yellow: Commons.Color.foreground
+    readonly property color red: Commons.Color.urgent
     readonly property int cardRadius: Math.max(0, Style.cornerRadius)
 
     readonly property bool ready: player !== null

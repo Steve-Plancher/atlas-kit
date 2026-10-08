@@ -45,7 +45,7 @@ Item {
   property color deep: "#1478e6"
   property string protocol: "standby"
   // Canvases paint their colors once into a texture, so they repaint on this.
-  signal paletteChanged()
+  signal hudPaletteChanged()
 
   FileView {
     path: root.home + "/.local/state/atlas-protocol/hud"
@@ -62,7 +62,7 @@ Item {
     if (f.length < 4 || !hex.test(f[1]) || !hex.test(f[2]) || !hex.test(f[3])) return
     protocol = /^[a-z-]+$/.test(f[0]) ? f[0] : "standby"
     cyan = f[1]; ice = f[2]; deep = f[3]
-    paletteChanged()
+    hudPaletteChanged()
   }
   readonly property string hudFont: "JetBrainsMono Nerd Font"
 
@@ -441,7 +441,7 @@ Item {
           Canvas {
             id: radar
             anchors.fill: parent
-            Connections { target: root; function onPaletteChanged() { radar.requestPaint() } }
+            Connections { target: root; function onHudPaletteChanged() { radar.requestPaint() } }
             onPaint: {
               var ctx = getContext("2d")
               ctx.reset()
@@ -586,7 +586,7 @@ Item {
               Canvas {
                 id: rippleCanvas
                 anchors.fill: parent
-                Connections { target: root; function onPaletteChanged() { rippleCanvas.requestPaint() } }
+                Connections { target: root; function onHudPaletteChanged() { rippleCanvas.requestPaint() } }
                 onPaint: {
                   var ctx = getContext("2d")
                   ctx.reset()

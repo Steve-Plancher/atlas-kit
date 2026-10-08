@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 // Winamp 2-inspired spectrum analyzer: stacked LED segments per band with
 // falling peak caps.
@@ -7,9 +8,9 @@ Item {
     id: root
 
     property var bands: []
-    property color barColor: Color.muted
-    property color accentColor: Color.foreground
-    property color warnColor: Color.urgent
+    property color barColor: Commons.Color.muted
+    property color accentColor: Commons.Color.foreground
+    property color warnColor: Commons.Color.urgent
     property int segH: 3
     property int segGap: 1
 

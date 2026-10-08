@@ -1,5 +1,30 @@
 # A.T.L.A.S OS changelog
 
+## v1.2.3: Omarchy update compatibility (Qt 6.12) (2026-10-08)
+
+### 🐞 Fixes: compatibility with the Oct 8 Omarchy update (omarchy-dev r6807, Quickshell 0.3.2, Qt 6.12)
+- **Invisible bar text/icons fixed.** Qt 6.12 adds a built-in `Color` type that hides Omarchy's palette, so
+  widgets silently lost their colors. Every A.T.L.A.S and third-party widget now uses `Commons.Color`
+  (Omarchy's official fix, upstream commit b83d3df): the custom bar, lock screen, notifications, speaker
+  panel, agents, monitor, glass, and the dock, GitHub, activity monitor and other plugins.
+- **Dock fixed** (updated to upstream v1.8.32 plus the color fix).
+- **HUD:** renamed an internal signal that now clashes with Qt 6.12's built-in `paletteChanged`, so protocol
+  switches keep repainting the rings.
+
+### ✨ New
+- `tools/qt612-color-fix.py`: idempotent fixer. `install.sh` runs it on all plugins after downloading the
+  third-party ones, so a fresh machine gets working widgets too.
+
+### 🔧 Changed
+- World clock widget renamed by Omarchy: `omacom.elsewhen` → `omarchy.elsewhen` (settings kept).
+- Bar left order restored: menu · window title · workspaces.
+
+### 📦 Apps
+- None added by the kit. Omarchy itself now ships Monologue, Hype, Disktree and Papers.
+
+### 🔒 Not included
+Personal files, passwords, logins, browser data, SSH keys. Secret scan passed.
+
 ## v1.2.2: Public kit, simpler install (2026-10-08)
 
 ### 🔧 Changed

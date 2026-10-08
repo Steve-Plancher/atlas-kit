@@ -3,14 +3,15 @@ import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 Panel {
   id: root
   ipcTarget: root.moduleName
-  readonly property color foreground: bar ? bar.barForeground : Color.foreground
-  readonly property color urgent: bar ? bar.urgent : Color.urgent
-  readonly property color accent: Color.accent
+  readonly property color foreground: bar ? bar.barForeground : Commons.Color.foreground
+  readonly property color urgent: bar ? bar.urgent : Commons.Color.urgent
+  readonly property color accent: Commons.Color.accent
   readonly property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.58)
   readonly property color glass: Qt.rgba(0.02, 0.06, 0.09, 0.94)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
@@ -234,7 +235,7 @@ Panel {
             width: parent.width
             implicitHeight: emptyCol.implicitHeight + Style.space(44)
             radius: Style.cornerRadius
-            color: root.alpha(Color.popups.background, 0.72)
+            color: root.alpha(Commons.Color.popups.background, 0.72)
             borderSpec: Border.flat(root.alpha(root.foreground, 0.20), 1)
             Column {
               id: emptyCol
@@ -313,7 +314,7 @@ Panel {
 
     implicitHeight: bodyCol.implicitHeight + Style.space(22)
     radius: Style.cornerRadius
-    color: root.alpha(row.urgent ? root.urgent : Color.popups.background, row.isSelected ? 0.32 : 0.82)
+    color: root.alpha(row.urgent ? root.urgent : Commons.Color.popups.background, row.isSelected ? 0.32 : 0.82)
     borderSpec: Border.flat(root.alpha(row.isSelected ? root.accent : (row.urgent ? root.urgent : root.foreground), row.isSelected ? 0.95 : 0.26), row.isSelected ? 2 : 1)
 
     RowLayout {

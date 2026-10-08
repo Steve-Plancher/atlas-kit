@@ -5,6 +5,7 @@ import Quickshell.Wayland
 import Quickshell.Io
 import Quickshell.Widgets
 import qs.Commons
+import qs.Commons as Commons
 
 // Iron Man-style quick-app launcher as a native Omarchy shell overlay.
 // Performance notes: animations run only while open, Canvas items are static
@@ -27,11 +28,11 @@ Item {
     property real pulse: 0.35
     property real launchCharge: 0
 
-    readonly property color background: Color.popups.background
-    readonly property color foreground: Color.popups.text
-    readonly property color mutedForeground: Color.muted
-    readonly property color accent: Color.accent
-    readonly property color selectedForeground: Style.selectedStateColor(foreground, accent, Color.urgent)
+    readonly property color background: Commons.Color.popups.background
+    readonly property color foreground: Commons.Color.popups.text
+    readonly property color mutedForeground: Commons.Color.muted
+    readonly property color accent: Commons.Color.accent
+    readonly property color selectedForeground: Style.selectedStateColor(foreground, accent, Commons.Color.urgent)
     readonly property color overlayBackground: Qt.rgba(background.r, background.g, background.b, 0.96)
     readonly property color glassPanel: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.055)
     readonly property color gridLine: Qt.rgba(accent.r, accent.g, accent.b, 0.58)

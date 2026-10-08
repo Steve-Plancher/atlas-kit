@@ -1,17 +1,18 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 // Adapter from Omarchy shell's shared style singletons. Omni should use the
 // running shell palette, not old theme-specific colour aliases.
 Item {
     id: theme
 
-    readonly property color background: Color.popups.background
-    readonly property color foreground: Color.popups.text
-    readonly property color mutedForeground: Color.muted
-    readonly property color accent: Color.accent
-    readonly property color urgent: Color.urgent
-    readonly property color border: Color.popups.border
+    readonly property color background: Commons.Color.popups.background
+    readonly property color foreground: Commons.Color.popups.text
+    readonly property color mutedForeground: Commons.Color.muted
+    readonly property color accent: Commons.Color.accent
+    readonly property color urgent: Commons.Color.urgent
+    readonly property color border: Commons.Color.popups.border
 
     readonly property color hoverForeground: Style.hoverStateColor(foreground, accent, urgent)
     readonly property color selectedForeground: Style.selectedStateColor(foreground, accent, urgent)
