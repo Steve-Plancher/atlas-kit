@@ -46,10 +46,12 @@ hl.config({
 -- Maximized/tiled windows keep the subtle A.T.L.A.S focus border.
 hl.window_rule({ match = { fullscreen = 1 }, border_size = 0, rounding = 0 })
 
--- Dock/multi-monitor cursor safety: avoids duplicate/ghost cursor rendering on external displays.
+-- Hardware cursors ON (2026-10-08): after the Oct 8 update (new Hyprland/mesa) forced software cursors
+-- rendered NOTHING on this Intel GPU, so the pointer was invisible. If duplicate/ghost cursors return on
+-- dock displays, try `no_hardware_cursors = 2` (auto) rather than true.
 hl.config({
   cursor = {
-    no_hardware_cursors = true,
+    no_hardware_cursors = false,
   },
 })
 

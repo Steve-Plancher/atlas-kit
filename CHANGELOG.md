@@ -1,5 +1,23 @@
 # A.T.L.A.S OS changelog
 
+## v1.2.4: Cursor + bar order after the update (2026-10-08)
+
+### 🐞 Fixes (after the Oct 8 update + reboot)
+- **Invisible mouse cursor fixed.** On the new Hyprland/mesa build, forced *software* cursors drew nothing on
+  this Intel GPU. `hypr/looknfeel.lua` now uses hardware cursors (`no_hardware_cursors = false`). If ghost
+  cursors ever appear on dock displays, try `2` (auto) rather than `true`.
+- **Bar order stays put.** The dock re-sorts the whole bar whenever it saves and forced workspaces before the
+  window title. Its preferred order now includes the window title: menu · window title · workspaces.
+
+### ✨ New
+- `tools/dock-order-fix.py`, run by `install.sh` after the third-party plugins download.
+
+### 📦 Apps added
+- None.
+
+### 🔒 Not included
+Personal files, passwords, logins, browser data, SSH keys. Secret scan passed.
+
 ## v1.2.3: Omarchy update compatibility (Qt 6.12) (2026-10-08)
 
 ### 🐞 Fixes: compatibility with the Oct 8 Omarchy update (omarchy-dev r6807, Quickshell 0.3.2, Qt 6.12)
