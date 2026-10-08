@@ -63,6 +63,7 @@ say "5/6  Rebuilding protocol cursors and wallpapers, applying the A.T.L.A.S the
 echo standard > "$HOME/.local/state/atlas-protocol/current" 2>/dev/null || true
 omarchy theme set hackerman >/dev/null 2>&1 || warn "theme set failed"
 omarchy-theme-bg-set "$HOME/.config/omarchy/backgrounds/hackerman/00-atlas.png" >/dev/null 2>&1
+cp "$KIT/VERSION" "$HOME/.local/share/atlas/VERSION" 2>/dev/null || true
 hyprctl setcursor Atlas-Cyan 24 >/dev/null 2>&1
 gsettings set org.gnome.desktop.interface cursor-theme Atlas-Cyan 2>/dev/null
 

@@ -7,6 +7,8 @@ Steve's complete **A.T.L.A.S** desktop look and tools, packed so they can be put
 
 > **Settings only.** No personal files, passwords, logins, browser data or SSH keys are in here.
 
+**Current version:** see [`VERSION`](VERSION) · [Changelog](CHANGELOG.md) · [All releases](https://github.com/Steve-Plancher/atlas-kit/releases)
+
 ![The A.T.L.A.S desktop in Deadlock Protocol](docs/images/desktop-code-red.jpg)
 
 ### The whole install at a glance
@@ -266,6 +268,27 @@ cd ~/atlas-kit
 git pull
 ./install.sh --no-apps
 ```
+
+---
+
+## Versions
+
+Every A.T.L.A.S OS change ships as a numbered release (`vMAJOR.MINOR.PATCH`): **minor** = new features,
+**patch** = fixes. Each release lists the new features and apps; the full history is in [CHANGELOG.md](CHANGELOG.md).
+
+```bash
+atlas-version            # which version this machine runs, e.g. "A.T.L.A.S OS v1.2.1"
+atlas-version --check    # compare with the latest release on GitHub
+```
+
+Update a machine to the latest release:
+
+```bash
+cd ~/atlas-kit && git pull && ./install.sh --no-apps
+```
+
+<sub>Maintainers: publish with `tools/release.sh <minor|patch> "<title>" notes.md`. It bumps VERSION, updates
+the changelog, runs the secret-scanning snapshot, tags, pushes and creates the GitHub release.</sub>
 
 ---
 

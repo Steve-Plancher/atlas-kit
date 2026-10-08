@@ -26,7 +26,7 @@ rsync -a "${EX[@]}" --relative --exclude='*.sample' --exclude='setup-fingerprint
 for d in .config/omarchy/plugins/*/; do [[ -d $d/.git ]] || take "${d%/}"; done   # own plugins; third-party → plugins.txt
 take .config/atlas-protocol .config/systemd/user/voxtype.service .config/voxtype .config/alacritty .config/ghostty \
      .config/kitty .config/foot .config/gtk-3.0 .config/gtk-4.0 .config/btop .config/starship.toml .config/wireplumber
-take .local/bin/atlas-{agent,beat,display,glass,identify-monitors,protocol,snap,snap-overlay,vibe,window-manager-toggle,wordmark}
+take .local/bin/atlas-{agent,beat,display,glass,identify-monitors,protocol,snap,snap-overlay,version,vibe,window-manager-toggle,wordmark}
 take .local/share/atlas .local/share/atlas-protocol .local/share/icons/Atlas-Cyan .icons/default/index.theme
 mkdir -p "$STAGE/home/.local/state/atlas-cursor"; cp .local/state/atlas-cursor/*.{py,sh} "$STAGE/home/.local/state/atlas-cursor/"
 
