@@ -5,8 +5,10 @@
 v=$(cat "$HOME/.local/share/atlas/VERSION" 2>/dev/null || echo unknown)
 echo "A.T.L.A.S OS v$v"
 if [[ ${1:-} == --check ]]; then
-  latest=$(gh release view --repo Steve-Plancher/atlas-kit --json tagName -q .tagName 2>/dev/null)
-  if [[ -z $latest ]]; then echo "Couldn't reach GitHub (signed in? try: gh auth status)"
+  # The repo is public, so no GitHub login is needed.
+  latest=$(curl -fsS --max-time 8 https://api.github.com/repos/Steve-Plancher/atlas-kit/releases/latest 2>/dev/null \
+    | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
+  if [[ -z $latest ]]; then echo "Couldn't reach GitHub (offline?)"
   elif [[ v$v == "$latest" ]]; then echo "Up to date ($latest is the latest release)"
   else echo "Newer release available: $latest. Update with: cd ~/atlas-kit && git pull && ./install.sh --no-apps"; fi
 fi

@@ -13,7 +13,7 @@ Steve's complete **A.T.L.A.S** desktop look and tools, packed so they can be put
 
 ### The whole install at a glance
 
-![Install steps: 1 Install Omarchy, 2 Sign in to GitHub, 3 Run install.sh, 4 Log out and back in](docs/images/install-steps.jpg)
+![Install steps: 1 Install Omarchy, 2 Download the kit, 3 Run install.sh, 4 Log out and back in](docs/images/install-steps.jpg)
 
 ---
 
@@ -39,7 +39,6 @@ You'll need:
 - ✅ The **Alienware**, with its **empty spare drive** installed
 - ✅ A **USB stick** (8 GB or more; it gets erased)
 - ✅ Internet (Wi-Fi or cable)
-- ✅ Your **GitHub** login
 
 ### ⚠️ Do these first, in Windows
 
@@ -116,23 +115,16 @@ omarchy update
 
 ## 4. Install the A.T.L.A.S kit
 
-### 4.1 Get the tools and sign in to GitHub
+### 4.1 Download the kit
+
+The kit is public, so no GitHub login is needed:
 
 ```bash
-omarchy pkg add github-cli rsync
-gh auth login
+omarchy pkg add rsync                                                  # used by the installer
+git clone https://github.com/Steve-Plancher/atlas-kit.git ~/atlas-kit
 ```
 
-For `gh auth login` choose: **GitHub.com → HTTPS → Yes → Login with a web browser**, then
-enter the code it shows in the browser.
-
-### 4.2 Download the kit
-
-```bash
-gh repo clone Steve-Plancher/atlas-kit ~/atlas-kit
-```
-
-### 4.3 Run the installer
+### 4.2 Run the installer
 
 ```bash
 ~/atlas-kit/install.sh
@@ -151,7 +143,7 @@ What it does, in order:
 
 > 💡 Only want the look, without the extra apps? Run `~/atlas-kit/install.sh --no-apps`
 
-### 4.4 Log out and back in
+### 4.3 Log out and back in
 
 Press **Super + Escape → Logout** (or reboot), so every app picks up the new cursor and colors.
 

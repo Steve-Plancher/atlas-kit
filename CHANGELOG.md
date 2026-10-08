@@ -1,5 +1,19 @@
 # A.T.L.A.S OS changelog
 
+## v1.2.2: Public kit, simpler install (2026-10-08)
+
+### 🔧 Changed
+- **The kit is now public:** installing no longer needs a GitHub login. Step 4.1 is just
+  `git clone https://github.com/Steve-Plancher/atlas-kit.git ~/atlas-kit` (the GitHub sign-in steps were removed).
+- Install-steps illustration updated: step 2 is now "Download the kit".
+- `atlas-version --check` checks for new releases without needing a GitHub login.
+
+### 📦 Apps added
+- None.
+
+### 🔒 Not included
+Personal files, passwords, logins, browser data, SSH keys. Full-history review before going public: no secrets found.
+
 ## v1.2.1: Version tracking (2026-10-08)
 
 ### ✨ New features
