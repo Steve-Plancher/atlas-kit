@@ -135,15 +135,20 @@
     },
     {
       "id": "steve.lock"
+    },
+    {
+      "id": "steve.background"
     }
   ],
   "version": 1,
   "disabledPlugins": [
     "omarchy.notifications",
-    "omarchy.lock"
+    "omarchy.lock",
+    "omarchy.background"
   ],
   "cloneSourceRestores": [
     "steve.notifications",
-    "steve.lock"
+    "steve.lock",
+    "steve.background"
   ]
 }

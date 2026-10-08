@@ -1,5 +1,21 @@
 # A.T.L.A.S OS changelog
 
+## v1.2.5: Wallpaper follows theme switches again (2026-10-08)
+
+### 🐞 Fixes
+- **Theme / protocol switches update the wallpaper again.** After the Oct 8 Omarchy update, Omarchy's own
+  wallpaper plugin crashed on every theme switch (Qt 6.12 `Color` clash), leaving the old protocol's art behind
+  the new colors (e.g. amber Focus wallpaper under a blue Standard HUD). It also made double-click wallpaper
+  picks behave oddly.
+- Temporary fix until Omarchy ships its fixed build: the wallpaper plugin is cloned as `steve.background`
+  with the `Commons.Color` fix applied. It will be removed again once Omarchy's update includes the fix.
+
+### 📦 Apps added
+- None.
+
+### 🔒 Not included
+Personal files, passwords, logins, browser data, SSH keys. Secret scan passed.
+
 ## v1.2.4: Cursor + bar order after the update (2026-10-08)
 
 ### 🐞 Fixes (after the Oct 8 update + reboot)
