@@ -184,7 +184,7 @@ systemctl --user enable --now atlas-display-dock
 
 | Want to… | Do this |
 |---|---|
-| Change color protocol | Click the radar icon in the bar to open the **Protocols panel**, or left double-click the desktop and pick a colored A.T.L.A.S |
+| Change color protocol | Click the protocol icon in the bar to open the **Protocols panel**, or left double-click the desktop and pick a colored A.T.L.A.S |
 | Change wallpaper only | **Left double-click** the desktop |
 | Change the whole theme | **Right double-click** the desktop. ⚠️ This replaces the A.T.L.A.S look. Choose **Hackerman** to get it back |
 | See-through windows | Glass icon in the bar |
@@ -203,7 +203,7 @@ The four protocols. They change **colors only**: theme, wallpaper art, HUD, bord
 
 ### The Protocols panel
 
-Click the radar icon in the bar (white in Standard, tinted in the other protocols). The four tiles switch the colors: the panel recolors while you watch
+Click the protocol icon in the bar. It shows the active protocol: a white radar in Standard, a red warning in Deadlock, an amber target in Focus, a violet note in Vibe. The four tiles switch the colors: the panel recolors while you watch
 and stays open. Below them, on/off switches control the HUD extras (Music Ring, Voice Ring, Now Playing).
 Keyboard: **Tab** or the arrow keys to move, **Space**/**Enter** to press, **Esc** to close. Changes made
 by voice or from a terminal show up in the panel straight away.

@@ -1,5 +1,17 @@
 # A.T.L.A.S OS changelog
 
+## v1.4.1: Protocols bar icon follows the active protocol (2026-10-09)
+
+### 🔧 Changed
+- **The Protocols bar icon now shows the active protocol:** a white radar in Standard, a red warning in Deadlock, an amber target in Focus, a violet music note in Vibe. It still pulses once when you switch.
+- README updated to match.
+
+### 📦 Apps added
+- None.
+
+### 🔒 Not included
+- Personal files, keys and tokens (secret scan passed).
+
 ## v1.4.0: Now Playing for any media, radar protocol icon (2026-10-09)
 
 ### ✨ New features

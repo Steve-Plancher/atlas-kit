@@ -170,9 +170,8 @@ Panel {
     onLoadFailed: root.nowPlayingOn = true
   }
 
-  // The bar always shows the radar; only its color follows the protocol (white in Standard).
-  // The tiles inside the panel keep each protocol's own icon.
-  readonly property string barIcon: "󰐷"
+  // The bar shows the active protocol's icon (radar in Standard), white in Standard and in the
+  // protocol's color otherwise.
   readonly property string currentName: root.current.name
   onCurrentNameChanged: if (root.protocols.length > 0) switchPulse.restart()
 
@@ -180,7 +179,7 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.barIcon
+    text: root.current.icon
     active: root.current.name !== "standard"
     activeColor: root.current.accent
     transformOrigin: Item.Center
