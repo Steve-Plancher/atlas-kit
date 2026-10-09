@@ -1,16 +1,72 @@
 #!/bin/bash
-# Vibe protocol's music reaction.
-#   atlas-vibe            show the current setting
-#   atlas-vibe on         music-reactive (spectrum ring + beat effects, drops flash the borders)
-#   atlas-vibe calm       Vibe colors only, no music reaction
-#   atlas-vibe is on|calm exit 0 when that is the setting (bar menu ✓)
-# The HUD watches the state file, so changes apply live.
-f=$HOME/.local/state/atlas-protocol/vibe-mode
-cur() { [[ $(cat "$f" 2>/dev/null) == calm ]] && echo calm || echo on; }
+# A.T.L.A.S HUD switches. The HUD watches the state files, so changes apply live.
+#
+#   atlas-vibe                          show all three switches
+#   atlas-vibe music on|off|toggle      Vibe's music ring (spectrum + beats; drops flash the borders)
+#   atlas-vibe voice on|off|toggle      Vibe's voice ring (reacts to the default mic; alias: mic)
+#   atlas-vibe nowplaying on|off|toggle the Spotify Now Playing panel, any protocol (alias: spotify)
+#   atlas-vibe is <switch> on|off       exit 0 when the switch is set that way (bar menu ✓)
+#
+# Older forms still work: atlas-vibe on|calm, atlas-vibe is on|calm (= the music switch).
+# Note: with the Zone Vibe headset as the mic, the voice ring puts it in call mode (thinner music).
+set -u
+P=$HOME/.local/state/atlas-protocol
+MUSIC=$P/vibe-mode          # mix|calm: the name the HUD has read since v1.1.0
+VOICE=$P/vibe-voice         # on|off
+NOWPLAYING=$HOME/.local/state/atlas-hud/nowplaying   # on|off
+
+usage() {
+  echo "usage: atlas-vibe [music|voice|nowplaying on|off|toggle] | is <switch> on|off | on|calm" >&2
+  exit 1
+}
+
+file() {  # file <switch> -> state file path
+  case $1 in
+    music) echo "$MUSIC" ;;
+    voice|mic) echo "$VOICE" ;;
+    nowplaying|now-playing|spotify) echo "$NOWPLAYING" ;;
+    *) return 1 ;;
+  esac
+}
+
+get() {  # get <switch> -> on|off
+  local f v; f=$(file "$1") || usage
+  v=$(cat "$f" 2>/dev/null)
+  case $f in
+    "$MUSIC") [[ $v == calm ]] && echo off || echo on ;;
+    "$VOICE") [[ $v == on ]] && echo on || echo off ;;
+    *) [[ $v == off ]] && echo off || echo on ;;
+  esac
+}
+
+set_() {  # set_ <switch> on|off|toggle
+  local f want; f=$(file "$1") || usage
+  case ${2:-} in
+    on|off) want=$2 ;;
+    toggle) [[ $(get "$1") == on ]] && want=off || want=on ;;
+    *) usage ;;
+  esac
+  mkdir -p "${f%/*}"
+  if [[ $f == "$MUSIC" ]]; then
+    [[ $want == on ]] && echo mix > "$f" || echo calm > "$f"
+  else
+    echo "$want" > "$f"
+  fi
+  echo "$want"
+}
+
 case "${1:-}" in
-  "") cur ;;
-  on|mix|music|react|reactive) mkdir -p "${f%/*}"; echo mix > "$f"; echo on ;;
-  calm|off) mkdir -p "${f%/*}"; echo calm > "$f"; echo calm ;;
-  is) [[ $(cur) == "${2:-}" ]] ;;
-  *) echo "usage: atlas-vibe [on|calm|is on|is calm]" >&2; exit 1 ;;
+  "") printf 'music %s\nvoice %s\nnowplaying %s\n' "$(get music)" "$(get voice)" "$(get nowplaying)" ;;
+  is)
+    case "${2:-}" in
+      on) [[ $(get music) == on ]] ;;
+      calm) [[ $(get music) == off ]] ;;
+      *) file "${2:-}" >/dev/null || usage
+         [[ ${3:-} == on || ${3:-} == off ]] || usage
+         [[ $(get "$2") == "$3" ]] ;;
+    esac ;;
+  on|mix|react|reactive) set_ music on ;;
+  calm|off) set_ music off ;;
+  *) file "$1" >/dev/null || usage
+     set_ "$1" "${2:-}" ;;
 esac

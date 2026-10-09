@@ -14,12 +14,32 @@ them back to the active protocol's colors 150 ms later.
 
 The HUD starts this only in Vibe (music-reactive) while it is animating, and
 stops it otherwise. cava dies with it (PR_SET_PDEATHSIG).
+
+atlas-beat --mic  is the voice ring's analyzer: cava on the DEFAULT MIC (or
+$ATLAS_MIC_SOURCE), restarted when the default mic changes, printing
+
+    {"v": [24 levels 0..1, bass first], "l": loudness 0..1}
+
+Fixed sensitivity (no auto-gain), so a quiet room keeps the ring flat. Levels
+only: no audio is stored or sent anywhere. With the Zone Vibe headset as the
+mic, opening it switches the headset to call mode; that is the switch's cost.
 """
 import ctypes, json, os, signal, subprocess, sys, tempfile, threading, time
 
 HOME = os.path.expanduser("~")
 STATE = os.path.join(HOME, ".local/state/atlas-protocol/state.conf")
 BARS = 32
+
+MIC_BARS = 24
+MIC_GATE = 0.06     # levels below this are drawn as 0
+MIC_GAIN = 2.0      # after the room's background is subtracted
+# The laptop mic hears a steady but WANDERING background (fan, dock hum: about -20 dBFS here),
+# so a fixed threshold keeps the ring moving in silence. Each band learns the room: its mean and
+# its typical wobble. Only sound above mean + 3 x wobble shows. The room estimate follows quiet
+# frames quickly (~0.7 s) and loud ones very slowly (~15 s), so speech is never learned as
+# background. A band that stays loud for over a second without a break is background too (speech
+# always has gaps between syllables), so a fan starting up is learned within about 2 s.
+ROOM_K, ROOM_FAST, ROOM_SLOW, ROOM_HOLD = 3.0, 0.05, 0.002, 30
 
 CAVA_CONF = f"""[general]
 bars = {BARS}
@@ -39,6 +59,28 @@ channels = mono
 [smoothing]
 noise_reduction = 55
 """
+
+
+MIC_CONF = """[general]
+bars = {bars}
+framerate = 30
+autosens = 0
+sensitivity = {sens}
+[input]
+method = pipewire
+source = {source}
+[output]
+method = raw
+raw_target = /dev/stdout
+data_format = ascii
+ascii_max_range = 1000
+bar_delimiter = 59
+frame_delimiter = 10
+channels = mono
+[smoothing]
+noise_reduction = 35
+"""
+MIC_SENSITIVITY = int(os.environ.get("ATLAS_MIC_SENS", "500"))   # tuning knob
 
 
 def die_with_parent():
@@ -92,19 +134,96 @@ def flash_borders():
         flash_lock.release()
 
 
-def main():
+def start_cava(conf_text):
+    """Start cava on a temp config; returns (process, config path)."""
     conf = tempfile.NamedTemporaryFile("w", prefix="atlas-beat-", suffix=".conf", delete=False)
-    conf.write(CAVA_CONF)
+    conf.write(conf_text)
     conf.close()
     # cava asks PipeWire for a small buffer, which drops the WHOLE graph to quantum 512 and made
     # Spotify underrun (music cut out). A relaxed latency keeps the graph at its normal 1024.
     env = dict(os.environ, PIPEWIRE_LATENCY="2048/48000")
     cava = subprocess.Popen(["cava", "-p", conf.name], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                             text=True, bufsize=1, preexec_fn=die_with_parent, env=env)
+    return cava, conf.name
+
+
+def mic_source():
+    if os.environ.get("ATLAS_MIC_SOURCE"):
+        return os.environ["ATLAS_MIC_SOURCE"]
+    r = subprocess.run(["pactl", "get-default-source"], capture_output=True, text=True)
+    return r.stdout.strip()
+
+
+def mic_main():
+    state = {"cava": None, "conf": None, "stopping": False}
+
+    def stop(*_):
+        state["stopping"] = True
+        if state["cava"]:
+            state["cava"].terminate()
+        if state["conf"] and os.path.exists(state["conf"]):
+            os.unlink(state["conf"])
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+
+    while True:
+        source = mic_source()
+        if not source:              # no mic at all (e.g. everything unplugged): wait for one
+            time.sleep(3)
+            continue
+        cava, conf = start_cava(MIC_CONF.format(bars=MIC_BARS, sens=MIC_SENSITIVITY, source=source))
+        state["cava"], state["conf"] = cava, conf
+
+        def follow_default(cava=cava, source=source):
+            # A new default mic (headset plugged in, picked in the panel) restarts cava on it.
+            while cava.poll() is None:
+                time.sleep(2)
+                if cava.poll() is None and mic_source() != source:
+                    cava.terminate()
+                    return
+        threading.Thread(target=follow_default, daemon=True).start()
+
+        mean, wobble, frames = [0.0] * MIC_BARS, [0.0] * MIC_BARS, 0
+        held = [0] * MIC_BARS                        # frames each band has stayed above the room
+        for line in cava.stdout:
+            parts = [p for p in line.strip().split(";") if p]
+            if len(parts) != MIC_BARS:
+                continue
+            raw = [min(1.0, int(p) / 1000) for p in parts]
+            frames += 1
+            v = []
+            for i, x in enumerate(raw):
+                above = x > mean[i] + ROOM_K * wobble[i]
+                held[i] = held[i] + 1 if above else 0
+                if frames <= 15:                     # first half second: learn the room quickly
+                    rate = 1.0 / frames
+                elif not above or held[i] > ROOM_HOLD:
+                    rate = ROOM_FAST
+                else:
+                    rate = ROOM_SLOW
+                mean[i] += (x - mean[i]) * rate
+                wobble[i] += (abs(x - mean[i]) - wobble[i]) * rate
+                y = min(1.0, max(0.0, x - mean[i] - ROOM_K * wobble[i]) * MIC_GAIN)
+                v.append(y if y >= MIC_GATE else 0.0)
+            loud = sum(sorted(v)[-6:]) / 6              # the 6 strongest bands: a voice is narrow
+            print(json.dumps({"v": [round(x, 2) for x in v], "l": round(loud, 3)},
+                             separators=(",", ":")), flush=True)
+        cava.wait()
+        os.unlink(conf)
+        if state["stopping"]:
+            return
+        time.sleep(0.5)             # cava died or the default mic changed: start again
+
+
+def main():
+    if "--mic" in sys.argv[1:]:
+        return mic_main()
+    cava, conf = start_cava(CAVA_CONF)
 
     def stop(*_):
         cava.terminate()
-        os.unlink(conf.name)
+        os.unlink(conf)
         sys.exit(0)
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)

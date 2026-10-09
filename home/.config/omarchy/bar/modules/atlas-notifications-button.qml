@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Bell for the A.T.L.A.S notification center. Built on BarIconButton so its
@@ -79,7 +80,7 @@ Item {
     width: dotSize
     height: dotSize
     radius: dotSize / 2
-    color: Color.accent
+    color: Commons.Color.accent
     x: Math.round((root.width + Style.bar.iconCanvas) / 2 - dotSize)
     y: Math.round((root.height - Style.bar.iconCanvas) / 2)
   }

@@ -184,7 +184,7 @@ systemctl --user enable --now atlas-display-dock
 
 | Want to… | Do this |
 |---|---|
-| Change color protocol | Click the protocol name (e.g. **STANDARD**) in the bar, or left double-click the desktop and pick a colored A.T.L.A.S |
+| Change color protocol | Click the protocol icon in the bar to open the **Protocols panel**, or left double-click the desktop and pick a colored A.T.L.A.S |
 | Change wallpaper only | **Left double-click** the desktop |
 | Change the whole theme | **Right double-click** the desktop. ⚠️ This replaces the A.T.L.A.S look. Choose **Hackerman** to get it back |
 | See-through windows | Glass icon in the bar |
@@ -199,7 +199,16 @@ The four protocols. They change **colors only**: theme, wallpaper art, HUD, bord
 | **Standard** | Blue (everyday) | "Atlas, initiate Standard Protocol" |
 | **Deadlock** | Crimson | "Atlas, initiate Deadlock Protocol" |
 | **Focus** | Amber | "Atlas, initiate Focus Protocol" |
-| **Vibe** | Violet, **reacts to music** | "Atlas, initiate Vibe Protocol" |
+| **Vibe** | Violet, **reacts to music and your voice** | "Atlas, initiate Vibe Protocol" |
+
+### The Protocols panel
+
+Click the protocol icon in the bar. The four tiles switch the colors: the panel recolors while you watch
+and stays open. Below them, on/off switches control the HUD extras (Music Ring, Voice Ring, Now Playing).
+Keyboard: **Tab** or the arrow keys to move, **Space**/**Enter** to press, **Esc** to close. Changes made
+by voice or from a terminal show up in the panel straight away.
+
+![The Protocols panel: four protocol tiles and the Music Ring, Voice Ring and Now Playing switches](docs/images/protocols-panel.jpg)
 
 Protocols from a terminal. Whole spoken sentences work too, ready for the future voice assistant:
 
@@ -210,7 +219,7 @@ atlas-protocol "Atlas, initiate Focus Protocol"  # filler words are ignored
 atlas-protocol next                              # cycle to the next one
 ```
 
-### Vibe: music-reactive HUD
+### Vibe: music- and voice-reactive HUD
 
 In **Vibe**, the HUD reacts to whatever is playing: a 64-bar spectrum ring around the core, rings that
 swell on kicks and spin faster when it's loud, a flashing floor pad, and, on big drops only, a lettering
@@ -218,19 +227,27 @@ glitch plus a quick window-border flash.
 
 ![Vibe protocol: violet spectrum ring around the A.T.L.A.S core](docs/images/vibe-spectrum.jpg)
 
+The **Voice Ring** (off until you switch it on) is a second, ice-colored ring just outside the music ring
+that reacts to your voice. It learns the room's background noise, so fans and hum stay dark.
+
 ```bash
-atlas-vibe on      # music-reactive (default)
-atlas-vibe calm    # Vibe colors only
+atlas-vibe                           # show all three switches
+atlas-vibe music on|off|toggle       # Music Ring
+atlas-vibe voice on|off|toggle       # Voice Ring (uses the microphone)
+atlas-vibe nowplaying on|off|toggle  # Now Playing panel
 ```
 
-It listens to the sound going **to** the speakers/headset via `cava`, never the microphone, and pauses
+The Music Ring listens to the sound going **to** the speakers/headset via `cava`. Only the Voice Ring opens
+the microphone (your default input), and only while it's on in Vibe. If that default is a wireless headset,
+the headset may switch to call mode while the Voice Ring runs; the laptop mic avoids that. Both rings pause
 outside Vibe, behind fullscreen windows, and when the laptop runs hot.
 
 ### Now Playing (Spotify)
 
 Whenever Spotify is playing, a **NOW PLAYING** panel fades in under System Telemetry on the HUD, styled
 to match: cover art in a bracketed frame, title, artist, album and a live time gauge. In Vibe it also gets a
-mini equalizer. It fades out when the music pauses or Spotify closes, in every protocol.
+mini equalizer. It fades out when the music pauses or Spotify closes, in every protocol. Hide it with the
+**Now Playing** switch in the Protocols panel.
 
 ![Now Playing panel: cover art, title, artist, album, time gauge and mini equalizer](docs/images/now-playing.jpg)
 
@@ -285,6 +302,15 @@ the changelog, runs the secret-scanning snapshot, tags, pushes and creates the G
 ---
 
 ## 9. Undo / troubleshooting
+
+### Run the health check
+
+```bash
+~/atlas-kit/tests/run.sh          # lint + unit tests, about a minute, changes nothing
+~/atlas-kit/tests/run.sh --live   # also restarts the bar, opens every bar panel, presses keys in the
+                                  # Protocols panel and recolors the desktop through every protocol
+                                  # (about 3 minutes); everything is put back afterwards
+```
 
 ### Put back what the installer replaced
 
@@ -342,9 +368,12 @@ hyprctl configerrors
 | `plugins.txt` | Third-party bar plugins, downloaded fresh from GitHub at a pinned version |
 | `machine-specific/` | Things tuned to the old laptop, **not installed automatically** |
 | `install.sh` | The installer |
+| `tests/` | Health check (`tests/run.sh`): lint, unit tests and live desktop checks |
+| `tools/` | Release, snapshot and Omarchy-update helpers (e.g. the Qt 6.12 color fix and scan) |
 
 **Included:** A.T.L.A.S blue theme colors · A.T.L.A.S wallpapers · live HUD · Protocols (Standard,
-Deadlock, Focus, Vibe; colors only, Vibe music-reactive) · Now Playing (Spotify) HUD panel · speaker panel without the mic meter
+Deadlock, Focus, Vibe; colors only, Vibe music- and voice-reactive) · Protocols bar panel with on/off
+switches · Now Playing (Spotify) HUD panel · speaker panel without the mic meter
 (keeps Bluetooth-style headsets out of call mode) · bar layout and custom widgets · glass · snap and
 title bars · lock screen · notifications · agents widget · Atlas-Cyan animated cursor · window look
 and keybindings · terminal configs · Voxtype config.

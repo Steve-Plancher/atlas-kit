@@ -5,8 +5,10 @@
 #   atlas-protocol <name>          engage it (standard deadlock focus vibe)
 #   atlas-protocol next            cycle to the next one
 #   atlas-protocol list            names, one per line
+#   atlas-protocol list --json     every profile's name, label, icon, colors, and which is active (bar panel)
 #   atlas-protocol is <name>       exit 0 when <name> is active (bar menu ✓)
 #   atlas-protocol status          Waybar-style JSON for the bar widget
+#   atlas-protocol resolve "<said>"  print which protocol a spoken command means (changes nothing)
 #   atlas-protocol build           (re)make wallpapers, wordmarks and cursors
 #
 # Profiles live in ~/.config/atlas-protocol/<name>.conf. A protocol changes
@@ -25,8 +27,8 @@ ORDER=(standard deadlock focus vibe)
 
 mkdir -p "$STATE" "$SHARE/backgrounds"
 log() { echo "[atlas-protocol] $*" >&2; }
-current() { local n; n=$(cat "$STATE/current" 2>/dev/null); echo "${n:-standard}"; }
-valid() { [[ -f $CONF/$1.conf ]]; }
+valid() { [[ -n $1 && -f $CONF/$1.conf ]]; }
+current() { local n; n=$(cat "$STATE/current" 2>/dev/null); valid "$n" || n=standard; echo "$n"; }
 
 load() {  # load <name> -> profile vars in the environment
   unset LABEL ICON DESC ACCENT ICE DEEP FG SELECTION MUTED HUE SAT BRIGHT CURSOR
@@ -59,6 +61,7 @@ build() {
     load "$name"
     local bg=$SHARE/backgrounds/00-atlas-protocol-$name.png
     log "building $name: wallpaper"
+    # shellcheck disable=SC2153  # BRIGHT, SAT and HUE come from the profile load() sources
     magick "$ART" -modulate "$BRIGHT,$SAT,$HUE" "$bg"
     magick "$bg" -crop 830x125+420+368 +repage "$HUD_DIR/wordmark-$name.png"
     log "building $name: cursor theme $CURSOR"
@@ -132,6 +135,40 @@ apply_cursor() {
   sed -i "s/^Inherits=.*/Inherits=$CURSOR/" "$HOME/.icons/default/index.theme" 2>/dev/null
 }
 
+list_json() {  # the bar panel's tiles: each profile with its own accent, the active one marked
+  local cur n lab sep=""
+  cur=$(current)
+  printf '['
+  for n in "${ORDER[@]}"; do
+    load "$n"; lab=${LABEL,,}
+    printf '%s{"name":"%s","label":"%s","icon":"%s","desc":"%s","accent":"%s","active":%s}' \
+      "$sep" "$n" "${lab^}" "$ICON" "${DESC:-}" "$ACCENT" "$([[ $n == "$cur" ]] && echo true || echo false)"
+    sep=,
+  done
+  printf ']\n'
+}
+
+# Accept whole spoken commands: "Atlas, initiate Deadlock Protocol",
+# "let's go into vibe code mode", "Vibe". Filler words are dropped, then old
+# names and plain colors map onto the current four. Prints the name, or fails.
+resolve() {
+  local words want="" w
+  words=$(echo "$*" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z\n' ' ')
+  for w in $words; do
+    case $w in
+      atlas|hey|ok|okay|please|initiate|ignite|ignitiate|engage|activate|enable|start|run|switch|go|to|into|the|a|protocol|mode|now|let|lets|s|us) ;;
+      *) want="${want:+$want-}$w" ;;
+    esac
+  done
+  case $want in
+    standby|normal|default|blue|home) want=standard ;;
+    code-red|red|dead-lock|lockdown|lock-down|alert) want=deadlock ;;
+    clean-slate|amber|gold|concentrate) want=focus ;;
+    house-party|violet|purple|vibes|vibing|vibe-code|vibe-coding|vibe-coder) want=vibe ;;
+  esac
+  valid "$want" && echo "$want"
+}
+
 engage() {
   local name=$1 from
   from=$(current)
@@ -152,7 +189,7 @@ engage() {
 
 case "${1:-}" in
   ""|show) current ;;
-  list) printf '%s\n' "${ORDER[@]}" ;;
+  list) if [[ ${2:-} == --json ]]; then list_json; else printf '%s\n' "${ORDER[@]}"; fi ;;
   is) [[ $(current) == "${2:-}" ]] ;;
   status)
     load "$(current)"
@@ -165,27 +202,11 @@ case "${1:-}" in
       [[ ${ORDER[i]} == "$cur" ]] && nxt=${ORDER[$(((i + 1) % ${#ORDER[@]}))]} && break
     done
     engage "$nxt" ;;
+  resolve) shift; resolve "$*" ;;
   *)
-    # Accept whole spoken commands: "Atlas, initiate Deadlock Protocol",
-    # "engage focus protocol", "Vibe". Filler words are dropped, then old
-    # names and plain colors map onto the current four.
-    words=$(echo "$*" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z\n' ' ')
-    want=""
-    for w in $words; do
-      case $w in
-        atlas|hey|ok|okay|please|initiate|ignite|ignitiate|engage|activate|enable|start|run|switch|go|to|into|the|a|protocol|mode|now) ;;
-        *) want="${want:+$want-}$w" ;;
-      esac
-    done
-    case $want in
-      standby|normal|default|blue|home) want=standard ;;
-      code-red|red|dead-lock|lockdown|lock-down|alert) want=deadlock ;;
-      clean-slate|amber|gold|concentrate) want=focus ;;
-      house-party|violet|purple|vibes|vibing) want=vibe ;;
-    esac
-    if valid "$want"; then engage "$want"
+    if want=$(resolve "$*"); then engage "$want"
     else
-      echo "usage: atlas-protocol [show|next|list|status|build|is <name>|${ORDER[*]// /|}]" >&2
+      echo "usage: atlas-protocol [show|next|list|status|build|is <name>|resolve <said>|${ORDER[*]// /|}]" >&2
       exit 1
     fi ;;
 esac

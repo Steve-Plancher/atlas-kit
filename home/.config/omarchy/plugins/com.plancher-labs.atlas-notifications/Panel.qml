@@ -13,7 +13,8 @@ Panel {
   readonly property color urgent: bar ? bar.urgent : Commons.Color.urgent
   readonly property color accent: Commons.Color.accent
   readonly property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.58)
-  readonly property color glass: Qt.rgba(0.02, 0.06, 0.09, 0.94)
+  // Panel glass follows the theme background (stays correct in every theme and protocol).
+  readonly property color glass: Qt.rgba(Commons.Color.background.r, Commons.Color.background.g, Commons.Color.background.b, 0.94)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property var notificationService: bar && bar.shell ? bar.shell.firstPartyServiceFor("omarchy.notifications") : null
   readonly property int activeCount: notificationService && notificationService.popupModel ? notificationService.popupModel.count : 0

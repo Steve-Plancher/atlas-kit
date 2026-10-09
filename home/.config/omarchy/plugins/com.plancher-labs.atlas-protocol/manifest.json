@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "com.plancher-labs.atlas-protocol",
+  "name": "A.T.L.A.S Protocols",
+  "version": "1.0.0",
+  "author": "Claude / Steve Plancher",
+  "description": "Switch the A.T.L.A.S protocol colors and the Vibe switches from a bar panel.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Protocols",
+    "description": "Standard, Deadlock, Focus and Vibe tiles, plus Music Ring, Voice Ring and Now Playing switches.",
+    "category": "System",
+    "aliases": [
+      "protocol",
+      "protocols",
+      "atlas"
+    ],
+    "allowMultiple": false
+  }
+}

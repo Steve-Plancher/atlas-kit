@@ -1,5 +1,52 @@
 # A.T.L.A.S OS changelog
 
+## v1.3.0: Protocols panel, voice ring and switches (2026-10-09)
+
+### ✨ New features
+- **Protocols panel on the bar.** Click the protocol icon to open a panel attached to the bar:
+  - 2×2 tiles for Standard, Deadlock, Focus and Vibe, each with a stripe in its own color. The active one is
+    outlined and marked with a dot.
+  - Clicking a tile shows "Switching…", then the whole panel recolors without closing.
+  - Real on/off switches for **Music Ring**, **Voice Ring** and **Now Playing** (no more ✓ marks).
+  - Follows changes made by voice or from a terminal straight away.
+  - Keyboard: Tab or the arrow keys to move, Space/Enter to press, Esc to close.
+- **Voice Ring (Vibe).** A 48-bar ice-colored ring just outside the music ring reacts to your voice through the
+  default microphone (`atlas-beat --mic`). It learns the room's background noise, so fans and hum stay dark.
+  Off until you switch it on, and it only runs in Vibe.
+- **Three Vibe switches from the terminal:** `atlas-vibe music|voice|nowplaying on|off|toggle`; `atlas-vibe`
+  alone shows all three. The old `atlas-vibe on` / `calm` still work.
+- **`atlas-protocol list --json`** (feeds the panel's tiles) and **`atlas-protocol resolve "<said>"`** (prints which
+  protocol a spoken phrase means, changes nothing). It now also understands "let's go into vibe code mode".
+- **Health check:** `tests/run.sh` runs shellcheck, pyflakes, Qt 6 qmllint, the Qt 6.12 palette scan, and unit
+  tests for `atlas-vibe`, `atlas-protocol`, `atlas-beat` and the panel. `tests/run.sh --live` also restarts the bar,
+  opens every bar panel, presses real keys in the Protocols panel and recolors the desktop through every protocol,
+  then puts everything back.
+- `tools/qt612-color-scan.py`: read-only check for QML that still uses the unqualified `Color` palette.
+
+### 🔧 Changed
+- The protocol button in the bar is now just the protocol's icon (hover for its name). The Protocols entries in
+  the Omarchy menu are gone; the panel replaces them.
+- Standard's description is now "Everyday blue", so it fits on its tile.
+- **Wallpaper workaround removed.** `steve.background` is gone and Omarchy's own wallpaper plugin is back, now that
+  Omarchy fixed it (omarchy-dev r6815). A machine that installed v1.2.5 keeps an unused
+  `~/.config/omarchy/plugins/steve.background` folder; it's safe to delete.
+- Needs an Omarchy build that includes the Qt 6.12 fix (omarchy-dev r6815 or newer, Oct 8 2026). Older builds
+  turn the screen black when a menu opens.
+
+### 🐞 Fixes
+- **Screen went black when opening the protocol menu, and many bar widgets were white.** Cause: the Qt 6.12
+  `Color` clash inside Omarchy's own core (r6807), fixed by updating to r6815. Fixed in the kit on top of that:
+  - The A.T.L.A.S bell button used the clashing `Color`, so its unread dot now shows in the theme color again.
+  - The notification panel's background was fixed dark blue; it now follows the protocol colors.
+  - Palette errors in the shell log went from 1,705 to 0, and all 17 bar panels were opened and checked.
+- An empty or corrupt protocol state file now falls back to Standard instead of breaking the protocol button.
+
+### 📦 Apps added
+- `shellcheck` and `python-pyflakes` (used by the health check).
+
+### 🔒 Not included
+Personal files, passwords, logins, browser data, SSH keys. Secret scan passed.
+
 ## v1.2.5: Wallpaper follows theme switches again (2026-10-08)
 
 ### 🐞 Fixes

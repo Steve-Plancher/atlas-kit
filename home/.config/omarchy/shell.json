@@ -86,12 +86,7 @@
           "id": "omarchy.network"
         },
         {
-          "id": "atlas-protocol",
-          "type": "command",
-          "exec": "/home/steve/.local/bin/atlas-protocol status",
-          "interval": 3,
-          "tooltip": "Protocol",
-          "onClick": "omarchy menu summon protocol"
+          "id": "com.plancher-labs.atlas-protocol"
         },
         {
           "id": "com.plancher-labs.atlas-glass"
@@ -135,20 +130,15 @@
     },
     {
       "id": "steve.lock"
-    },
-    {
-      "id": "steve.background"
     }
   ],
   "version": 1,
   "disabledPlugins": [
     "omarchy.notifications",
-    "omarchy.lock",
-    "omarchy.background"
+    "omarchy.lock"
   ],
   "cloneSourceRestores": [
     "steve.notifications",
-    "steve.lock",
-    "steve.background"
+    "steve.lock"
   ]
 }

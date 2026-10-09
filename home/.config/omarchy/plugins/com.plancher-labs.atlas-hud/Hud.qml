@@ -125,6 +125,18 @@ Item {
   readonly property bool musicOn: protocol === "vibe" && vibeMode !== "calm"
   property var mBands: []
 
+  // Voice ring (`atlas-vibe voice on`): `atlas-beat --mic` streams 24 levels from
+  // the default mic, with the room's steady background already subtracted.
+  property bool voiceSwitch: false
+  readonly property bool voiceOn: protocol === "vibe" && voiceSwitch
+  property var vBands: []
+  property real vLevel: 0
+  function vband(i) { var a = vBands; return a.length > i ? a[i] : 0 }
+  onVoiceOnChanged: if (!voiceOn) { vBands = []; vLevel = 0 }
+
+  // Now Playing panel switch (`atlas-vibe nowplaying on|off`), any protocol.
+  property bool nowPlayingOn: true
+
   // ── Now Playing (Spotify) ──────────────────────────────────────────────
   // The Spotify MPRIS player, if one is running. The panel shows only while it plays.
   readonly property var spotify: {
@@ -144,7 +156,7 @@ Item {
   // MPRIS position has no change signal; nudge it once a second while visible.
   Timer {
     interval: 1000; repeat: true
-    running: root.spotifyPlaying && root.artActive
+    running: root.spotifyPlaying && root.nowPlayingOn && root.artActive
     onTriggered: if (root.spotify) root.spotify.positionChanged()
   }
   property real mLevel: 0
@@ -161,6 +173,39 @@ Item {
     onFileChanged: reload()
     onLoaded: root.vibeMode = String(text()).trim() === "calm" ? "calm" : "mix"
     onLoadFailed: root.vibeMode = "mix"
+  }
+
+  FileView {
+    path: root.home + "/.local/state/atlas-protocol/vibe-voice"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.voiceSwitch = String(text()).trim() === "on"
+    onLoadFailed: root.voiceSwitch = false
+  }
+
+  FileView {
+    path: root.home + "/.local/state/atlas-hud/nowplaying"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.nowPlayingOn = String(text()).trim() !== "off"
+    onLoadFailed: root.nowPlayingOn = true
+  }
+
+  Process {
+    id: micProc
+    running: root.voiceOn && root.animate
+    command: [root.home + "/.local/bin/atlas-beat", "--mic"]
+    stdout: SplitParser {
+      onRead: function(line) {
+        var e
+        try { e = JSON.parse(line) } catch (err) { return }
+        root.vBands = e.v || []
+        root.vLevel = e.l || 0
+      }
+    }
+    onRunningChanged: if (!running) { root.vBands = []; root.vLevel = 0 }
   }
 
   Process {
@@ -427,7 +472,7 @@ Item {
 
           GlowDisc {
             anchors.fill: parent
-            opacity: Math.min(1, root.wave(panel.t, 5600, 0.4, 0.85) + root.mLevel * 0.6)
+            opacity: Math.min(1, root.wave(panel.t, 5600, 0.4, 0.85) + root.mLevel * 0.6 + root.vLevel * 0.5)
             stops: [[0.0, root.alpha(root.cyan, 0.20)], [0.5, root.alpha(root.deep, 0.07)], [1.0, root.alpha(root.deep, 0.0)]]
           }
         }
@@ -505,6 +550,32 @@ Item {
             segments: [[0, 16], [180, 16]]
           }
         }
+        // ── Vibe voice ring ─────────────────────────────────────────
+        // 48 short bars in the gap between the fine tick ring (r 238) and the
+        // heavy arcs (r 276): bass at the top, treble at the bottom, mirrored,
+        // like the music ring outside. White tips set it apart from the music.
+        // At rest it is a faint ring of ticks: the mic is listening.
+        Item {
+          x: root.coreX; y: root.coreY
+          opacity: root.voiceOn ? root.stage(0.1, 0.5) : 0
+          visible: opacity > 0
+          Behavior on opacity { NumberAnimation { duration: 600 } }
+          Repeater {
+            model: 48
+            Rectangle {
+              required property int index
+              readonly property real v: Math.pow(root.vband(index < 24 ? index : 47 - index), 0.7)
+              width: 4; height: 3 + v * 27
+              x: -width / 2; y: -(245 + height)
+              radius: 2
+              antialiasing: true
+              color: v > 0.55 ? "#ffffff" : root.ice
+              opacity: 0.3 + v * 0.7
+              transform: Rotation { origin.x: 2; origin.y: 245 + height; angle: (index + 0.5) * 360 / 48 }
+            }
+          }
+        }
+
         // ── Vibe spectrum ring ──────────────────────────────────────
         // 64 bars just outside the halo: bass at the top, treble at the bottom,
         // mirrored left/right. Plain rectangles, so a frame is only geometry.
@@ -801,7 +872,7 @@ Item {
           id: nowPlaying
           x: 70; y: 712
           spacing: 10
-          opacity: root.spotifyPlaying ? root.stage(0.55, 0.9) : 0
+          opacity: root.spotifyPlaying && root.nowPlayingOn ? root.stage(0.55, 0.9) : 0
           visible: opacity > 0.01
           Behavior on opacity { NumberAnimation { duration: 500; easing.type: Easing.InOutQuad } }
 

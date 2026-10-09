@@ -20,9 +20,11 @@ openai-codex-desktop
 oxygen-cursors
 pavucontrol
 playerctl
+python-pyflakes
 qpwgraph
 restic
 rtkit
+shellcheck
 spotify-launcher
 tailscale
 telegram-desktop
