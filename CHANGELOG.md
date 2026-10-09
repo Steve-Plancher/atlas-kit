@@ -1,5 +1,33 @@
 # A.T.L.A.S OS changelog
 
+## v1.5.0: Power modes: Performance on AC, Balanced on battery, Energy Saver at 15% (2026-10-09)
+
+### ✨ New features
+- **atlas-power**: one set of rules for the power modes (user service `atlas-power.service`, settings in `~/.config/atlas-power.conf`)
+  - Plugged in → **Performance**, on battery → **Balanced**, 15 % or less → **Energy Saver** until plugged in
+  - A mode picked by hand in the Power panel or menu lasts until the next plug/unplug instead of being remembered forever
+  - A notification for every automatic switch
+  - **Energy Saver** turns off window animations, blur and shadows, the screensaver, Voxtype, Bluetooth and Taildrop receive, dims the screen to 40 % and turns off the keyboard light. All of it is put back when you leave Energy Saver, and it stays off through a Hyprland reload.
+  - `atlas-power status` shows the current state; `atlas-power restore` puts the desktop back if it ever gets stuck
+
+### 🔧 Changed
+- HUD wallpaper runs at 20 fps in Balanced (30 fps in Performance) at the same motion speed
+- Thermal guard waits for 92 °C in Performance (`HOT_PERFORMANCE`), so normal turbo no longer freezes the HUD
+
+### 🐞 Fixes
+- Laptop kept coming back in Performance, even on battery: Omarchy was keeping a hand-picked mode forever
+- `install.sh`: a failed plugin checkout is now reported correctly (shellcheck SC2015)
+- Thermal guard: unused import removed
+
+### 🧪 Tests
+- `tests/test-atlas-power.py` (51 checks), run from `tests/run.sh` alongside pyflakes for atlas-power and the guard
+
+### 📦 Apps added
+- None
+
+### 🔒 Not included
+- No secrets; the secret scan is clean
+
 ## v1.4.1: Protocols bar icon follows the active protocol (2026-10-09)
 
 ### 🔧 Changed

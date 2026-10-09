@@ -53,7 +53,11 @@ say "4/6  Downloading third-party bar plugins"
 PLUG=$HOME/.config/omarchy/plugins
 grep -vE '^\s*(#|$)' "$KIT/plugins.txt" | while read -r name url commit; do
   if [[ -d $PLUG/$name/.git ]]; then echo "  $name already present"; continue; fi
-  git clone -q "$url" "$PLUG/$name" && git -C "$PLUG/$name" checkout -q "$commit" && echo "  $name ✓" || warn "could not fetch $name"
+  if git clone -q "$url" "$PLUG/$name" && git -C "$PLUG/$name" checkout -q "$commit"; then
+    echo "  $name ✓"
+  else
+    warn "could not fetch $name"
+  fi
 done
 
 # Qt 6.12 shadows Omarchy's Color singleton; qualify palette refs in every plugin (idempotent).
@@ -73,6 +77,7 @@ gsettings set org.gnome.desktop.interface cursor-theme Atlas-Cyan 2>/dev/null
 say "6/6  Starting services and reloading the desktop"
 systemctl --user daemon-reload
 systemctl --user enable --now voxtype.service 2>/dev/null || warn "voxtype service not started (is voxtype installed?)"
+systemctl --user enable --now atlas-power.service 2>/dev/null || warn "atlas-power service not started"
 hyprctl reload >/dev/null 2>&1
 omarchy restart shell >/dev/null 2>&1
 

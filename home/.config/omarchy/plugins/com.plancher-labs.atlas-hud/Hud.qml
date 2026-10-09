@@ -259,7 +259,11 @@ Item {
   // Every looping motion is a pure function of time on one shared 33 ms tick, so the scene
   // redraws at most 30 times a second (it used ~60, with the compositor re-blending the whole
   // screen each frame). Each screen advances its own clock only while it is live.
-  readonly property int frameMs: 33
+  // The Balanced power profile runs the same scene at 20 fps (atlas-power); motion speed is
+  // unchanged because every clock advances by frameMs, and the per-frame decays scale with it.
+  property string platformProfile: ""
+  readonly property int frameMs: platformProfile === "balanced" ? 50 : 33
+  readonly property real frameScale: frameMs / 33
   property int tick: 0
   function phase(ms, period, offset) {
     var p = ((ms - (offset || 0)) % period + period) % period
@@ -310,6 +314,7 @@ Item {
     }
     prevNet = { rx: rx, tx: tx, t: now }
     uptimeSec = Number(f[9])
+    platformProfile = f[10]
     powerSaver = f[10] === "low-power" || f[10] === "quiet"
     pausedByUser = f[11] === "1"
     if (Number(f[12]) > 0) screensaverSeconds = Number(f[12])
@@ -403,11 +408,13 @@ Item {
     running: root.animate
     onTriggered: {
       root.tick++
-      if (root.wmPulse > 0) root.wmPulse = Math.max(0, root.wmPulse - 0.055)
-      if (root.wmEnergy > 0) root.wmEnergy = Math.max(0, root.wmEnergy - 0.018)
-      if (root.mBeat > 0) root.mBeat = Math.max(0, root.mBeat - 0.09)
-      if (root.mDrop > 0) root.mDrop = Math.max(0, root.mDrop - 0.03)
-      if (root.tick % 2) return  // typewriter steps every other frame (~15/s)
+      var k = root.frameScale
+      if (root.wmPulse > 0) root.wmPulse = Math.max(0, root.wmPulse - 0.055 * k)
+      if (root.wmEnergy > 0) root.wmEnergy = Math.max(0, root.wmEnergy - 0.018 * k)
+      if (root.mBeat > 0) root.mBeat = Math.max(0, root.mBeat - 0.09 * k)
+      if (root.mDrop > 0) root.mDrop = Math.max(0, root.mDrop - 0.03 * k)
+      // Typewriter: every other frame at 30 fps (~15/s), every frame at 20 fps.
+      if (root.frameMs < 40 && root.tick % 2) return
       var msg = root.currentMessage
       if (root.erasing) {
         root.typed = Math.max(0, root.typed - 3)

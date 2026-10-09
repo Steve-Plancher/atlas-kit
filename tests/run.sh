@@ -1,5 +1,5 @@
 #!/bin/bash
-# A.T.L.A.S protocol, HUD switch and theme checks: lint, then unit tests. --live also restarts the
+# A.T.L.A.S protocol, HUD switch, power and theme checks: lint, then unit tests. --live also restarts the
 # shell for a runtime palette lint, opens every bar widget panel, drives the Protocols panel with real
 # key presses, and recolors the real desktop through every protocol (about 2 minutes), putting
 # everything back.
@@ -11,7 +11,7 @@ step() { echo "── $1"; shift; if "$@"; then echo "   ok"; else echo "   FAIL
 step "shellcheck" shellcheck -x "$B/atlas-vibe" "$B/atlas-protocol" \
   "$HOME/.local/share/atlas/bin/omarchy-theme-bg-set" "$HOME/.local/share/atlas/bin/omarchy-theme-bg-switcher" \
   lib.sh test-atlas-vibe.sh test-atlas-protocol.sh test-theme-health.sh panel-audit.sh panel-keys-check.sh live-check.sh run.sh
-step "pyflakes" python3 -m pyflakes "$B/atlas-beat" test-atlas-beat.py test-protocol-panel.py ../tools/qt612-color-scan.py ../tools/qt612-color-fix.py
+step "pyflakes" python3 -m pyflakes "$B/atlas-beat" "$B/atlas-power" "$B/atlas-thermal-guard" test-atlas-power.py test-atlas-beat.py test-protocol-panel.py ../tools/qt612-color-scan.py ../tools/qt612-color-fix.py
 step "luac (atlas_protocol.lua)" luac -p "$HOME/.config/hypr/atlas_protocol.lua"
 # Qt 6's qmllint (the one on PATH is Qt 5 and checks nothing). Only syntax-level errors fail;
 # the HUD's 14 known style warnings (unqualified access in inline components) are reported, not fatal.
@@ -21,6 +21,7 @@ step "qmllint (Hud.qml syntax)" hudlint
 step "atlas-vibe" ./test-atlas-vibe.sh
 step "atlas-protocol" ./test-atlas-protocol.sh
 step "protocol panel" python3 -I test-protocol-panel.py
+step "atlas-power (power profile rules + Energy Saver effects)" python3 -I test-atlas-power.py
 step "atlas-beat (music + voice analyzers)" python3 -I test-atlas-beat.py
 if [[ ${1:-} == --live ]]; then
   step "theme health: static + runtime palette lint (restarts the shell)" ./test-theme-health.sh

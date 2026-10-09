@@ -16,11 +16,11 @@ samples for a few seconds to confirm the crossing was not a one-second turbo spi
 trips needs group write on the sysfs attributes, which 99-atlas-thermal-trip.rules grants at boot;
 without it the guard says so and falls back to sampling every 2 s.
 
-Settings: ~/.config/atlas-thermal-guard.conf  (HOT=82, COOL=65, NOTIFY=0)
+Settings: ~/.config/atlas-thermal-guard.conf  (HOT=82, HOT_PERFORMANCE=92, COOL=65, NOTIFY=0)
+HOT_PERFORMANCE applies while the Performance profile is on, so normal turbo there does not trip it.
 """
 import glob
 import json
-import os
 import select
 import signal
 import subprocess
@@ -43,7 +43,7 @@ HEARTBEAT = 60
 
 
 def settings():
-    values = {"HOT": 82, "COOL": 65, "NOTIFY": 0}
+    values = {"HOT": 82, "HOT_PERFORMANCE": 92, "COOL": 65, "NOTIFY": 0}
     try:
         for line in CONF.read_text().splitlines():
             key, _, val = line.partition("=")
@@ -52,6 +52,14 @@ def settings():
     except OSError:
         pass
     return values
+
+
+def for_profile(cfg, active):
+    """Settings with HOT resolved for the profile the guard is protecting."""
+    resolved = dict(cfg)
+    if active == "performance":
+        resolved["HOT"] = cfg["HOT_PERFORMANCE"]
+    return resolved
 
 
 def package_zone():
@@ -173,7 +181,7 @@ def main():
     signal.signal(signal.SIGTERM, on_stop)
     signal.signal(signal.SIGINT, on_stop)
 
-    cfg = settings()
+    cfg = for_profile(settings(), state.get("previous") if state.get("engaged") else profile())
     armed = arm_trips(cfg)
     if armed:
         log(f"armed CPU trip points, waiting on the sensor ({cfg})")
@@ -209,7 +217,9 @@ def main():
         return bool(line)
 
     while True:
-        cfg = settings()
+        current = profile()
+        # While engaged the profile reads power-saver; the threshold belongs to the one it replaced.
+        cfg = for_profile(settings(), state.get("previous") if state["engaged"] else current)
         # A resume clears the trips, and a conf edit changes where they belong. When the udev rule
         # is installed after the guard started, this is also where it picks the trips up, so
         # granting access does not need a restart.
@@ -218,7 +228,6 @@ def main():
             start_monitor()
             log("trip points became writable -- switched from sampling to sensor events")
         t = package_temp()
-        current = profile()
 
         if state["engaged"]:
             if current != GUARD_PROFILE:

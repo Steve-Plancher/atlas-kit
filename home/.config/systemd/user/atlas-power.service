@@ -1,0 +1,13 @@
+[Unit]
+Description=A.T.L.A.S power (profile rules + Energy Saver effects)
+After=graphical-session.target power-profiles-daemon.service upower.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/atlas-power run
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

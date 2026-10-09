@@ -1,0 +1,448 @@
+#!/usr/bin/env python3
+"""A.T.L.A.S power: one set of rules for the three power profiles.
+
+  plugged in               -> Performance
+  on battery               -> Balanced
+  battery at or below LOW  -> Energy Saver, until plugged in again
+  a profile picked by hand (Power panel or menu) holds until the next plug/unplug
+
+On top of what power-profiles-daemon already does per profile (CPU boost policy and the Dell
+thermal/fan table), each profile changes the desktop:
+
+  Performance   HUD at 30 fps; the thermal guard waits for HOT_PERFORMANCE (92 C) before stepping in
+  Balanced      HUD at 20 fps (Hud.qml reads the platform profile itself)
+  Energy Saver  HUD frozen (Hud.qml), and, undone on the way out:
+                window animations, blur and shadows off; no screensaver (the screen just blanks);
+                Voxtype, Bluetooth and Taildrop receive paused; screen dimmed to BRIGHTNESS %,
+                keyboard backlight off
+
+Omarchy remembers the last profile picked for each power source (~/.local/state/omarchy/
+powerprofiles/{ac,battery}) and re-applies it on every plug/unplug and at boot. That memory is how
+the laptop kept coming back in Performance, even on battery. This service holds both files at the
+rules above, so a profile picked by hand is applied but forgotten at the next power change.
+
+The thermal guard also switches to power-saver, while the CPU is hot. That is cooling, not Energy
+Saver: none of the effects run while its state file says engaged.
+
+Settings: ~/.config/atlas-power.conf  (LOW=15, BRIGHTNESS=40, NOTIFY=1)
+Usage:    atlas-power [run|status|restore]
+"""
+import json
+import os
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+HOME = Path(os.environ.get("HOME") or Path.home())
+CONF = HOME / ".config/atlas-power.conf"
+OMARCHY_PROFILES = HOME / ".local/state/omarchy/powerprofiles"
+SAVED = HOME / ".local/state/atlas-power/saver.json"
+GUARD_STATE = HOME / ".local/state/atlas-thermal-guard/state.json"
+SCREENSAVER_OFF = HOME / ".local/state/omarchy/toggles/screensaver-off"
+# Sourced by Hyprland on every reload, so a config reload during Energy Saver keeps effects off.
+HYPR_FLAG = HOME / ".local/state/omarchy/toggles/hypr/atlas-power-saver.lua"
+
+SAVER = "power-saver"
+RULES = {"ac": "performance", "battery": "balanced"}
+NAMES = {"performance": "Performance", "balanced": "Balanced", SAVER: "Energy Saver"}
+GLYPHS = {"performance": "\U000f04c5", "balanced": "\U000f0f85", SAVER: "\U000f032a"}
+PAUSED_UNITS = ("voxtype.service", "omarchy-tailscale-receive.service")
+SCREEN = "intel_backlight"
+KEYBOARD = "dell::kbd_backlight"
+HYPR_OPTIONS = {  # hyprctl option -> its place in hl.config()
+    "animations:enabled": ("animations",),
+    "decoration:blur:enabled": ("decoration", "blur"),
+    "decoration:shadow:enabled": ("decoration", "shadow"),
+}
+
+
+def settings():
+    values = {"LOW": 15, "BRIGHTNESS": 40, "NOTIFY": 1}
+    try:
+        for line in CONF.read_text().splitlines():
+            key, _, val = line.partition("=")
+            if key.strip() in values and val.strip().isdigit():
+                values[key.strip()] = int(val.strip())
+    except OSError:
+        pass
+    return values
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+# ── Rules (pure, unit-tested) ──────────────────────────────────────────────────
+
+def source(on_battery):
+    return "battery" if on_battery else "ac"
+
+
+def is_low(on_battery, percent, low):
+    return bool(on_battery) and percent is not None and percent <= low
+
+
+def saver_wanted(profile, guard_engaged):
+    return profile == SAVER and not guard_engaged
+
+
+def hypr_lua(values):
+    """hl.config() call setting each option in `values` ({option: bool})."""
+    tree = {}
+    for option, enabled in values.items():
+        node = tree
+        for key in HYPR_OPTIONS[option]:
+            node = node.setdefault(key, {})
+        node["enabled"] = enabled
+
+    def render(node):
+        parts = []
+        for key, val in node.items():
+            parts.append(f"{key} = {render(val) if isinstance(val, dict) else str(val).lower()}")
+        return "{ " + ", ".join(parts) + " }"
+
+    return f"hl.config({render(tree)})"
+
+
+# ── The machine (replaced by a fake in tests) ──────────────────────────────────
+
+class System:
+    def run(self, *cmd):
+        try:
+            return subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            log(f"{cmd[0]}: {e}")
+            return subprocess.CompletedProcess(cmd, 1, "", str(e))
+
+    def ok(self, *cmd):
+        return self.run(*cmd).returncode == 0
+
+    def hypr_get(self, option):
+        try:
+            return bool(json.loads(self.run("hyprctl", "getoption", option, "-j").stdout)["bool"])
+        except (ValueError, KeyError, TypeError):
+            return None
+
+    def hypr_eval(self, lua):
+        return self.ok("hyprctl", "eval", lua)
+
+    def unit_active(self, unit):
+        return self.ok("systemctl", "--user", "is-active", "--quiet", unit)
+
+    def unit(self, verb, unit):
+        return self.ok("systemctl", "--user", verb, unit)
+
+    def bluetooth_on(self):
+        return self.ok("omarchy-bluetooth-power", "is-on")
+
+    def bluetooth(self, state):
+        return self.ok("omarchy-bluetooth-power", state)
+
+    def light(self, device):
+        """(current, max) raw brightness, or None when the device is missing."""
+        cur = self.run("brightnessctl", "-d", device, "get")
+        top = self.run("brightnessctl", "-d", device, "max")
+        try:
+            return int(cur.stdout), int(top.stdout)
+        except ValueError:
+            return None
+
+    def set_light(self, device, value):
+        return self.ok("brightnessctl", "-q", "-d", device, "set", str(value))
+
+    def notify(self, glyph, title, body):
+        self.run("omarchy-notification-send", "-g", glyph, title, body)
+
+
+# ── Energy Saver effects ───────────────────────────────────────────────────────
+
+class Saver:
+    """Turns the Energy Saver effects on and off, saving whatever it changed in SAVED first.
+
+    SAVED is written before anything is touched, so a crash or reboot mid-way still leaves
+    `atlas-power restore` (or the next start) what it needs to put the desktop back.
+    """
+
+    def __init__(self, system, cfg):
+        self.sys = system
+        self.cfg = cfg
+
+    @staticmethod
+    def active():
+        return SAVED.exists()
+
+    def enter(self):
+        if self.active():
+            return
+        saved = {"hypr": {o: self.sys.hypr_get(o) for o in HYPR_OPTIONS},
+                 "screensaver_was_off": SCREENSAVER_OFF.exists(),
+                 "units": [u for u in PAUSED_UNITS if self.sys.unit_active(u)],
+                 "bluetooth": self.sys.bluetooth_on(),
+                 "lights": {}}
+        for device, percent in ((SCREEN, self.cfg["BRIGHTNESS"]), (KEYBOARD, 0)):
+            reading = self.sys.light(device)
+            if reading:
+                cur, top = reading
+                target = round(top * percent / 100)
+                if cur > target:  # dim only: never brighten a screen that is already low
+                    saved["lights"][device] = {"was": cur, "set": target}
+        SAVED.parent.mkdir(parents=True, exist_ok=True)
+        SAVED.write_text(json.dumps(saved, indent=1))
+
+        off = {o: False for o in HYPR_OPTIONS}
+        HYPR_FLAG.parent.mkdir(parents=True, exist_ok=True)
+        HYPR_FLAG.write_text("-- Written by atlas-power while Energy Saver is on; removed when it ends.\n"
+                             + hypr_lua(off) + "\n")
+        self.sys.hypr_eval(hypr_lua(off))
+        SCREENSAVER_OFF.parent.mkdir(parents=True, exist_ok=True)
+        SCREENSAVER_OFF.touch()
+        for unit in saved["units"]:
+            self.sys.unit("stop", unit)
+        if saved["bluetooth"]:
+            self.sys.bluetooth("off")
+        for device, light in saved["lights"].items():
+            self.sys.set_light(device, light["set"])
+        log(f"energy saver effects on (paused: {', '.join(saved['units']) or 'nothing'}"
+            f"{', bluetooth' if saved['bluetooth'] else ''})")
+
+    def leave(self):
+        try:
+            saved = json.loads(SAVED.read_text())
+        except (OSError, ValueError):
+            return
+        HYPR_FLAG.unlink(missing_ok=True)
+        restore = {o: v for o, v in saved.get("hypr", {}).items() if o in HYPR_OPTIONS and v is not None}
+        if restore:
+            self.sys.hypr_eval(hypr_lua(restore))
+        if not saved.get("screensaver_was_off"):
+            SCREENSAVER_OFF.unlink(missing_ok=True)
+        for unit in saved.get("units", []):
+            self.sys.unit("start", unit)
+        if saved.get("bluetooth"):
+            self.sys.bluetooth("on")
+        for device, light in saved.get("lights", {}).items():
+            reading = self.sys.light(device)
+            # Put the old level back unless it was changed by hand in the meantime.
+            if reading and reading[0] == light["set"]:
+                self.sys.set_light(device, light["was"])
+        SAVED.unlink(missing_ok=True)
+        log("energy saver effects off, desktop restored")
+
+
+# ── Rules engine ───────────────────────────────────────────────────────────────
+
+class Controller:
+    """Applies the rules. `power` reads and sets the profile and battery (D-Bus in real use)."""
+
+    def __init__(self, system, power, cfg=None):
+        self.sys = system
+        self.power = power
+        self.cfg = cfg or settings()
+        self.saver = Saver(system, self.cfg)
+        self.low_handled = False  # the low-battery switch happens once per discharge
+        self.on_battery = None
+
+    def notify(self, profile, why):
+        if self.cfg["NOTIFY"]:
+            self.sys.notify(GLYPHS[profile], f"{NAMES[profile]} mode", why)
+
+    def pin(self):
+        """Hold Omarchy's remembered profiles at the rules."""
+        OMARCHY_PROFILES.mkdir(parents=True, exist_ok=True)
+        for src, want in RULES.items():
+            path = OMARCHY_PROFILES / src
+            try:
+                have = path.read_text().strip()
+            except OSError:
+                have = None
+            if have != want:
+                path.write_text(want + "\n")
+                if have:
+                    log(f"omarchy {src} profile {have} -> {want} (picked by hand: kept until the next plug/unplug)")
+
+    def switch(self, profile, why):
+        if self.power.profile() != profile and self.power.set_profile(profile):
+            log(f"{why}: -> {profile}")
+            self.notify(profile, why)
+
+    def start(self):
+        self.pin()
+        self.on_battery = self.power.on_battery()
+        self.power_changed(startup=True)
+
+    def power_changed(self, startup=False):
+        """Plugged in or unplugged (also run once at start)."""
+        on_battery = self.power.on_battery()
+        if not startup and on_battery == self.on_battery:
+            return
+        self.on_battery = on_battery
+        self.low_handled = False
+        pct = self.power.percent()
+        if is_low(on_battery, pct, self.cfg["LOW"]):
+            self.low_handled = True
+            self.switch(SAVER, f"Battery at {pct:.0f}%")
+        elif on_battery:
+            self.switch(RULES["battery"], "Running on battery")
+        else:
+            self.switch(RULES["ac"], "Plugged in")
+        # A switch reaches the effects through the profile-changed signal; at start nothing may
+        # change, so check once here.
+        if startup:
+            self.reconcile()
+
+    def battery_changed(self):
+        pct = self.power.percent()
+        if not self.low_handled and is_low(self.power.on_battery(), pct, self.cfg["LOW"]):
+            self.low_handled = True
+            self.switch(SAVER, f"Battery at {pct:.0f}% — saving power until you plug in")
+
+    def reconcile(self):
+        """Effects follow the profile: on in Energy Saver, off everywhere else."""
+        want = saver_wanted(self.power.profile(), guard_engaged())
+        if want and not self.saver.active():
+            self.saver.enter()
+        elif not want and self.saver.active():
+            self.saver.leave()
+
+
+def guard_engaged():
+    try:
+        return bool(json.loads(GUARD_STATE.read_text()).get("engaged"))
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+# ── D-Bus glue ─────────────────────────────────────────────────────────────────
+
+class DBusPower:
+    """UPower for the battery, power-profiles-daemon for the profile; both on the system bus."""
+
+    def __init__(self):
+        import gi
+        gi.require_version("Gio", "2.0")
+        from gi.repository import Gio
+        self.Gio = Gio
+        bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+
+        def proxy(name, path, iface):
+            return Gio.DBusProxy.new_sync(bus, Gio.DBusProxyFlags.NONE, None, name, path, iface, None)
+
+        self.upower = proxy("org.freedesktop.UPower", "/org/freedesktop/UPower", "org.freedesktop.UPower")
+        self.battery = proxy("org.freedesktop.UPower", "/org/freedesktop/UPower/devices/DisplayDevice",
+                             "org.freedesktop.UPower.Device")
+        self.ppd = proxy("net.hadess.PowerProfiles", "/net/hadess/PowerProfiles", "net.hadess.PowerProfiles")
+
+    @staticmethod
+    def _get(proxy, name):
+        value = proxy.get_cached_property(name)
+        return value.unpack() if value is not None else None
+
+    def on_battery(self):
+        return bool(self._get(self.upower, "OnBattery"))
+
+    def percent(self):
+        return self._get(self.battery, "Percentage") if self._get(self.battery, "IsPresent") else None
+
+    def profile(self):
+        return self._get(self.ppd, "ActiveProfile")
+
+    def set_profile(self, name):
+        from gi.repository import GLib
+        try:
+            self.ppd.call_sync("org.freedesktop.DBus.Properties.Set",
+                               GLib.Variant("(ssv)", ("net.hadess.PowerProfiles", "ActiveProfile",
+                                                      GLib.Variant("s", name))),
+                               self.Gio.DBusCallFlags.NONE, 5000, None)
+            return True
+        except GLib.Error as e:
+            log(f"could not set {name}: {e.message}")
+            return False
+
+
+def run():
+    import gi
+    from gi.repository import Gio, GLib
+    power = DBusPower()
+    ctl = Controller(System(), power)
+    ctl.start()
+    log(f"running: {source(ctl.on_battery)}, {power.profile()}, battery {power.percent()}%, {ctl.cfg}")
+
+    pending = {}
+
+    def later(key, seconds, fn):
+        """Run fn once, `seconds` after the last request (bursts of signals collapse into one)."""
+        if key in pending:
+            GLib.source_remove(pending[key])
+
+        def fire():
+            pending.pop(key, None)
+            fn()
+            return False
+        pending[key] = GLib.timeout_add(int(seconds * 1000), fire)
+
+    # Omarchy's shell applies the remembered profile on a power change; wait for it to settle, then
+    # apply the rules. The guard writes its state just after switching, hence the effects delay.
+    power.upower.connect("g-properties-changed", lambda *a: later("power", 1.5, ctl.power_changed))
+    power.battery.connect("g-properties-changed", lambda *a: later("battery", 1, ctl.battery_changed))
+    power.ppd.connect("g-properties-changed", lambda *a: later("effects", 2, ctl.reconcile))
+
+    monitors = []
+    for directory, fn in ((OMARCHY_PROFILES, ctl.pin), (GUARD_STATE.parent, ctl.reconcile)):
+        directory.mkdir(parents=True, exist_ok=True)
+        mon = Gio.File.new_for_path(str(directory)).monitor_directory(Gio.FileMonitorFlags.NONE, None)
+        mon.connect("changed", lambda *a, fn=fn, key=str(directory): later(key, 0.5, fn))
+        monitors.append(mon)
+
+    def heartbeat():  # a missed signal can never strand the desktop in the wrong state
+        ctl.pin()
+        ctl.reconcile()
+        return True
+    GLib.timeout_add_seconds(60, heartbeat)
+
+    loop = GLib.MainLoop()
+    try:
+        gi.require_version("GLibUnix", "2.0")
+        from gi.repository import GLibUnix
+        signal_add = GLibUnix.signal_add
+    except (ImportError, ValueError):  # GLib older than 2.80
+        signal_add = GLib.unix_signal_add
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        signal_add(GLib.PRIORITY_DEFAULT, signum, loop.quit)
+    loop.run()
+    log("stopped (Energy Saver effects, if on, stay until the profile changes)")
+
+
+def status():
+    power = DBusPower()
+    pct = power.percent()
+    print(f"power      {'battery' if power.on_battery() else 'plugged in'}"
+          + (f", {pct:.0f}%" if pct is not None else ""))
+    print(f"profile    {NAMES.get(power.profile(), power.profile())}")
+    for src in RULES:
+        try:
+            remembered = (OMARCHY_PROFILES / src).read_text().strip()
+        except OSError:
+            remembered = "-"
+        print(f"omarchy    {src}: {remembered} (rule: {RULES[src]})")
+    print(f"effects    {'Energy Saver effects ON' if Saver.active() else 'off'}")
+    print(f"guard      {'engaged (cooling)' if guard_engaged() else 'idle'}")
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else "run"
+    if cmd == "run":
+        run()
+    elif cmd == "status":
+        status()
+    elif cmd == "restore":
+        Saver(System(), settings()).leave()
+    else:
+        print(__doc__.split("Settings:")[0].rstrip() + "\n\nUsage: atlas-power [run|status|restore]",
+              file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
