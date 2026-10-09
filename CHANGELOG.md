@@ -1,5 +1,17 @@
 # A.T.L.A.S OS changelog
 
+## v1.3.3: Super + A shortcut removed (2026-10-09)
+
+### 🔧 Changed
+- **Removed the Super + A shortcut** and the leftover notes for a separate app that's no longer part of A.T.L.A.S OS. Super + A is free now.
+- Cleaned up the README's "won't be there" list to match.
+
+### 📦 Apps added
+- None.
+
+### 🔒 Not included
+- Personal files, keys and tokens (secret scan passed).
+
 ## v1.3.2: Picture-in-picture stays on its workspace (2026-10-09)
 
 ### 🔧 Changed
