@@ -1297,8 +1297,8 @@ Item {
     mask: Region { item: edgeTriggerLoader }
 
     anchors {
-      top: root.position === "top"
-      bottom: root.position === "bottom"
+      top: root.position === "top" || root.vertical
+      bottom: root.position === "bottom" || root.vertical
       left: root.position === "left" || !root.vertical
       right: root.position === "right" || !root.vertical
     }

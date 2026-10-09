@@ -58,8 +58,6 @@ done
 
 # Qt 6.12 shadows Omarchy's Color singleton; qualify palette refs in every plugin (idempotent).
 python3 "$KIT/tools/qt612-color-fix.py" "$PLUG" || warn "Qt 6.12 color fix failed"
-# The dock re-sorts the bar on save; teach it to keep the window title before the workspaces.
-python3 "$KIT/tools/dock-order-fix.py" "$PLUG/rosakodu.dock" || warn "dock order fix failed"
 
 say "5/6  Rebuilding protocol cursors and wallpapers, applying the A.T.L.A.S theme"
 "$HOME/.local/bin/atlas-protocol" build || warn "protocol build failed (needs imagemagick, xcur2png, xorg-xcursorgen)"

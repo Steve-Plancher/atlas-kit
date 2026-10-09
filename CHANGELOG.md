@@ -1,5 +1,22 @@
 # A.T.L.A.S OS changelog
 
+## v1.3.1: Taskbar autohide fix, bar order, dock off (2026-10-09)
+
+### 🐞 Fixes
+- **Taskbar autohide works again.** The hover strip that brings the bar back when you move the mouse to the screen edge now anchors correctly (`steve.bar/Bar.qml`), so the bar reappears at the bottom.
+
+### 🔧 Changed
+- **Bar order is now Menu · Workspaces · Window title** (Steve's choice, 2026-10-09).
+- **Removed `tools/dock-order-fix.py`** and its step in `install.sh`. The dock's built-in order already matches the new layout, so the patch is no longer needed.
+- **Dock stays off** in `dock-settings.json`.
+- Checked against Omarchy `omarchy-dev` r6818 (Oct 9 update): all lint and tests pass, including the runtime palette check.
+
+### 📦 Apps added
+- None.
+
+### 🔒 Not included
+- Personal files, keys and tokens (secret scan passed). Machine-specific hardware files stay in `machine-specific/`.
+
 ## v1.3.0: Protocols panel, voice ring and switches (2026-10-09)
 
 ### ✨ New features

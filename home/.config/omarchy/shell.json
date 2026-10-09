@@ -39,10 +39,10 @@
           "id": "omarchy.menu"
         },
         {
-          "id": "omarchy.active-window"
+          "id": "omarchy.workspaces"
         },
         {
-          "id": "omarchy.workspaces"
+          "id": "omarchy.active-window"
         }
       ],
       "right": [
