@@ -1,5 +1,21 @@
 # A.T.L.A.S OS changelog
 
+## v1.4.0: Now Playing for any media, radar protocol icon (2026-10-09)
+
+### ✨ New features
+- **Now Playing works with any media.** The HUD panel now shows YouTube, Spotify, or any website or app with media controls, labeled with the source: `NOW PLAYING · YOUTUBE`, `· SPOTIFY`, and so on. Cover art, title, channel or artist, and the time gauge work for all of them.
+- **New radar icon for Protocols on the bar.** It replaces the robot, which looked too much like the Agents widget. The bar always shows the radar: white in Standard, tinted red, amber or violet in the other protocols, with one quick pulse when you switch.
+
+### 🔧 Changed
+- The Standard tile in the Protocols panel uses the radar. Deadlock, Focus and Vibe keep their own icons.
+- README updated for both.
+
+### 📦 Apps added
+- None.
+
+### 🔒 Not included
+- Personal files, keys and tokens (secret scan passed).
+
 ## v1.3.3: Super + A shortcut removed (2026-10-09)
 
 ### 🔧 Changed

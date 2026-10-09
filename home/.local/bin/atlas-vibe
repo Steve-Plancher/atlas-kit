@@ -4,7 +4,7 @@
 #   atlas-vibe                          show all three switches
 #   atlas-vibe music on|off|toggle      Vibe's music ring (spectrum + beats; drops flash the borders)
 #   atlas-vibe voice on|off|toggle      Vibe's voice ring (reacts to the default mic; alias: mic)
-#   atlas-vibe nowplaying on|off|toggle the Spotify Now Playing panel, any protocol (alias: spotify)
+#   atlas-vibe nowplaying on|off|toggle the Now Playing panel (Spotify, YouTube, any player), any protocol (alias: spotify)
 #   atlas-vibe is <switch> on|off       exit 0 when the switch is set that way (bar menu ✓)
 #
 # Older forms still work: atlas-vibe on|calm, atlas-vibe is on|calm (= the music switch).

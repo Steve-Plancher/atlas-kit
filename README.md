@@ -184,7 +184,7 @@ systemctl --user enable --now atlas-display-dock
 
 | Want to… | Do this |
 |---|---|
-| Change color protocol | Click the protocol icon in the bar to open the **Protocols panel**, or left double-click the desktop and pick a colored A.T.L.A.S |
+| Change color protocol | Click the radar icon in the bar to open the **Protocols panel**, or left double-click the desktop and pick a colored A.T.L.A.S |
 | Change wallpaper only | **Left double-click** the desktop |
 | Change the whole theme | **Right double-click** the desktop. ⚠️ This replaces the A.T.L.A.S look. Choose **Hackerman** to get it back |
 | See-through windows | Glass icon in the bar |
@@ -203,7 +203,7 @@ The four protocols. They change **colors only**: theme, wallpaper art, HUD, bord
 
 ### The Protocols panel
 
-Click the protocol icon in the bar. The four tiles switch the colors: the panel recolors while you watch
+Click the radar icon in the bar (white in Standard, tinted in the other protocols). The four tiles switch the colors: the panel recolors while you watch
 and stays open. Below them, on/off switches control the HUD extras (Music Ring, Voice Ring, Now Playing).
 Keyboard: **Tab** or the arrow keys to move, **Space**/**Enter** to press, **Esc** to close. Changes made
 by voice or from a terminal show up in the panel straight away.
@@ -242,11 +242,12 @@ the microphone (your default input), and only while it's on in Vibe. If that def
 the headset may switch to call mode while the Voice Ring runs; the laptop mic avoids that. Both rings pause
 outside Vibe, behind fullscreen windows, and when the laptop runs hot.
 
-### Now Playing (Spotify)
+### Now Playing (Spotify, YouTube, any player)
 
-Whenever Spotify is playing, a **NOW PLAYING** panel fades in under System Telemetry on the HUD, styled
-to match: cover art in a bracketed frame, title, artist, album and a live time gauge. In Vibe it also gets a
-mini equalizer. It fades out when the music pauses or Spotify closes, in every protocol. Hide it with the
+Whenever something plays (Spotify, YouTube, any website or app with media controls), a **NOW PLAYING** panel
+fades in under System Telemetry on the HUD, labeled with the source (`NOW PLAYING · YOUTUBE`, `· SPOTIFY`, …)
+and styled to match: cover art in a bracketed frame, title, artist or channel, album and a live time gauge. In
+Vibe it also gets a mini equalizer. It fades out when playback pauses or stops, in every protocol. Hide it with the
 **Now Playing** switch in the Protocols panel.
 
 ![Now Playing panel: cover art, title, artist, album, time gauge and mini equalizer](docs/images/now-playing.jpg)
@@ -373,7 +374,7 @@ hyprctl configerrors
 
 **Included:** A.T.L.A.S blue theme colors · A.T.L.A.S wallpapers · live HUD · Protocols (Standard,
 Deadlock, Focus, Vibe; colors only, Vibe music- and voice-reactive) · Protocols bar panel with on/off
-switches · Now Playing (Spotify) HUD panel · speaker panel without the mic meter
+switches · Now Playing HUD panel (Spotify, YouTube, any player) · speaker panel without the mic meter
 (keeps Bluetooth-style headsets out of call mode) · bar layout and custom widgets · glass · snap and
 title bars · lock screen · notifications · agents widget · Atlas-Cyan animated cursor · window look
 and keybindings · terminal configs · Voxtype config.

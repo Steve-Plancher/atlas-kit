@@ -27,7 +27,7 @@ Panel {
   readonly property var current: {
     for (var i = 0; i < root.protocols.length; i++)
       if (root.protocols[i].active) return root.protocols[i]
-    return { name: "standard", label: "Standard", icon: "󰚩", desc: "", accent: Commons.Color.accent }
+    return { name: "standard", label: "Standard", icon: "󰐷", desc: "", accent: Commons.Color.accent }
   }
   readonly property bool inVibe: root.current.name === "vibe"
   // Name of the protocol being engaged; it takes a second or two (theme re-apply is last).
@@ -170,12 +170,27 @@ Panel {
     onLoadFailed: root.nowPlayingOn = true
   }
 
+  // The bar always shows the radar; only its color follows the protocol (white in Standard).
+  // The tiles inside the panel keep each protocol's own icon.
+  readonly property string barIcon: "󰐷"
+  readonly property string currentName: root.current.name
+  onCurrentNameChanged: if (root.protocols.length > 0) switchPulse.restart()
+
   BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.current.icon
-    active: true
+    text: root.barIcon
+    active: root.current.name !== "standard"
+    activeColor: root.current.accent
+    transformOrigin: Item.Center
+
+    // One short ping when the protocol changes, then still.
+    SequentialAnimation {
+      id: switchPulse
+      NumberAnimation { target: button; property: "scale"; to: 1.35; duration: 160; easing.type: Easing.OutQuad }
+      NumberAnimation { target: button; property: "scale"; to: 1.0; duration: 420; easing.type: Easing.OutBack }
+    }
     tooltipText: "Protocol: " + root.current.label + " — click to switch"
     onPressed: root.toggle()
   }

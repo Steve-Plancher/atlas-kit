@@ -137,17 +137,32 @@ Item {
   // Now Playing panel switch (`atlas-vibe nowplaying on|off`), any protocol.
   property bool nowPlayingOn: true
 
-  // ── Now Playing (Spotify) ──────────────────────────────────────────────
-  // The Spotify MPRIS player, if one is running. The panel shows only while it plays.
-  readonly property var spotify: {
+  // ── Now Playing (any media player) ─────────────────────────────────────
+  // The MPRIS player that is playing right now: Spotify, YouTube in the browser, etc.
+  // playerctld is only a proxy for the others, so it is skipped. The panel shows only while one plays.
+  readonly property var player: {
     var ps = Mpris.players.values
     for (var i = 0; i < ps.length; i++) {
       var p = ps[i]
-      if (String(p.identity).toLowerCase().indexOf("spotify") >= 0 || String(p.dbusName).toLowerCase().indexOf("spotify") >= 0) return p
+      if (String(p.dbusName).toLowerCase().indexOf("playerctld") >= 0) continue
+      if (p.isPlaying && String(p.trackTitle || "") !== "") return p
     }
     return null
   }
-  readonly property bool spotifyPlaying: !!spotify && spotify.isPlaying && String(spotify.trackTitle || "") !== ""
+  readonly property bool mediaPlaying: !!player
+  // Where it plays from, for the header. Browsers don't report the site, so YouTube is
+  // recognised from an open browser window titled "… - YouTube".
+  readonly property string mediaSource: {
+    if (!player) return ""
+    var id = String(player.identity || player.dbusName || "").toLowerCase()
+    if (/edge|chrom|firefox|brave|vivaldi|zen/.test(id)) {
+      var ws = Hyprland.toplevels.values
+      for (var i = 0; i < ws.length; i++)
+        if (String(ws[i].title || "").indexOf("YouTube") >= 0) return "YOUTUBE"
+      return "BROWSER"
+    }
+    return String(player.identity || "MEDIA").toUpperCase()
+  }
   function clockTime(sec) {
     sec = Math.max(0, Math.floor(sec || 0))
     var m = Math.floor(sec / 60), s = sec % 60
@@ -156,8 +171,8 @@ Item {
   // MPRIS position has no change signal; nudge it once a second while visible.
   Timer {
     interval: 1000; repeat: true
-    running: root.spotifyPlaying && root.nowPlayingOn && root.artActive
-    onTriggered: if (root.spotify) root.spotify.positionChanged()
+    running: root.mediaPlaying && root.nowPlayingOn && root.artActive
+    onTriggered: if (root.player) root.player.positionChanged()
   }
   property real mLevel: 0
   property real mBeat: 0
@@ -867,16 +882,16 @@ Item {
           }
         }
 
-        // ── Now Playing: left, under telemetry (only while Spotify plays) ──
+        // ── Now Playing: left, under telemetry (only while media plays) ──
         Column {
           id: nowPlaying
           x: 70; y: 712
           spacing: 10
-          opacity: root.spotifyPlaying && root.nowPlayingOn ? root.stage(0.55, 0.9) : 0
+          opacity: root.mediaPlaying && root.nowPlayingOn ? root.stage(0.55, 0.9) : 0
           visible: opacity > 0.01
           Behavior on opacity { NumberAnimation { duration: 500; easing.type: Easing.InOutQuad } }
 
-          HudText { text: "▌NOW PLAYING  ·  SPOTIFY"; color: root.ice; size: 15; spacing: 3; bold: true }
+          HudText { text: "▌NOW PLAYING  ·  " + root.mediaSource; color: root.ice; size: 15; spacing: 3; bold: true }
 
           Row {
             spacing: 14
@@ -886,7 +901,7 @@ Item {
               Rectangle { anchors.fill: parent; color: root.alpha(root.cyan, 0.10); border.color: root.alpha(root.cyan, 0.55); border.width: 1 }
               Image {
                 anchors.fill: parent; anchors.margins: 3
-                source: root.spotify ? (root.spotify.trackArtUrl || "") : ""
+                source: root.player ? (root.player.trackArtUrl || "") : ""
                 fillMode: Image.PreserveAspectCrop
                 asynchronous: true; cache: true; smooth: true
                 sourceSize.width: 160; sourceSize.height: 160
@@ -907,17 +922,17 @@ Item {
               anchors.verticalCenter: parent.verticalCenter
               HudText {
                 width: 260; elide: Text.ElideRight
-                text: root.spotify ? String(root.spotify.trackTitle || "").toUpperCase() : ""
+                text: root.player ? String(root.player.trackTitle || "").toUpperCase() : ""
                 color: root.ice; size: 18; spacing: 2; bold: true
               }
               HudText {
                 width: 260; elide: Text.ElideRight
-                text: root.spotify ? String(root.spotify.trackArtist || "") : ""
+                text: root.player ? String(root.player.trackArtist || "") : ""
                 color: root.cyan; size: 14; spacing: 2
               }
               HudText {
                 width: 260; elide: Text.ElideRight
-                text: root.spotify ? String(root.spotify.trackAlbum || "") : ""
+                text: root.player ? String(root.player.trackAlbum || "") : ""
                 color: root.alpha(root.ice, 0.6); size: 12; spacing: 2
               }
             }
@@ -926,8 +941,8 @@ Item {
           // Progress, built like the telemetry gauges.
           Gauge {
             label: "TIME"
-            value: root.spotify && root.spotify.length > 0 ? Math.min(1, root.spotify.position / root.spotify.length) : 0
-            readout: root.spotify ? root.clockTime(root.spotify.position) + " / " + root.clockTime(root.spotify.length) : ""
+            value: root.player && root.player.length > 0 ? Math.min(1, root.player.position / root.player.length) : 0
+            readout: root.player ? root.clockTime(root.player.position) + " / " + root.clockTime(root.player.length) : ""
           }
 
           // Live mini equalizer in Vibe (fed by atlas-beat); hidden elsewhere.
