@@ -43,3 +43,7 @@ end
 
 -- A.T.L.A.S cursor theme + protocol border colors (Atlas-Cyan unless a protocol is engaged).
 require("hypr.atlas_protocol")
+
+-- Picture-in-picture (YouTube etc.) stays on the workspace it was opened on.
+-- Omarchy's default pins it to every workspace; this unpins it. SUPER+O still pins on demand.
+o.window({ tag = "pip" }, { pin = false })

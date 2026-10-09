@@ -1,5 +1,16 @@
 # A.T.L.A.S OS changelog
 
+## v1.3.2: Picture-in-picture stays on its workspace (2026-10-09)
+
+### 🔧 Changed
+- **Picture-in-picture stays on its own workspace.** YouTube and other browser PiP windows no longer follow you to every workspace. Omarchy pins them by default; a rule in `hyprland.lua` unpins them. Press SUPER + O on a PiP window to pin it when you do want it everywhere.
+
+### 📦 Apps added
+- None.
+
+### 🔒 Not included
+- Personal files, keys and tokens (secret scan passed).
+
 ## v1.3.1: Taskbar autohide fix, bar order, dock off (2026-10-09)
 
 ### 🐞 Fixes
